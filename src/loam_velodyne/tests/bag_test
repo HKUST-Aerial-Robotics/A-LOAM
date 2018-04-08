@@ -1,0 +1,53 @@
+#! /usr/bin/env python
+
+import datetime
+import os
+import rosbag
+import rostest
+import sys
+import time
+import unittest
+import sensor_msgs.point_cloud2 as point_cloud2
+from itertools import izip
+
+'''
+A simple test to play test data into the system and record the results, then
+verify the results.
+Usage
+
+bag_test <comparison_bag.bag> <test_bag.bag>
+'''
+
+class TestBag(unittest.TestCase):
+    def test_bags_match(self):
+        # Load comparison bag
+        comparison = dict()
+        for topic, msg, t in rosbag.Bag(sys.argv[1]).read_messages():
+            # This also replaces tf timestamps under the assumption 
+            # that all transforms in the message share the same timestamp
+            if msg._type == 'tf2_msgs/TFMessage':
+                for m in msg.transforms:
+                    comparison[(topic, m.header.stamp, m.header.frame_id, m.child_frame_id)] = m
+            else:
+                try:
+                    comparison[(topic, msg.header.stamp.to_sec())] = msg
+                except:
+                    pass
+        # Wait for DUT to finish filling up the test bag (30 sec)
+        time.sleep(35.0-(datetime.datetime.today()-start_time).seconds)
+        test_output_bag = sys.argv[2]
+        while not os.path.isfile(test_output_bag):
+            time.sleep(0.2)
+        # Check that all messages are the same
+        for topic, msg, t in rosbag.Bag(test_output_bag).read_messages():
+            if msg._type == 'sensor_msgs/PointCloud2':
+                if (topic, msg.header.stamp.to_sec()) in comparison:
+                    comparison_msg = comparison[(topic, msg.header.stamp.to_sec())]
+                    for datum1, datum2 in izip(point_cloud2.read_points(comparison_msg), point_cloud2.read_points(msg)):
+                        self.assertEquals(datum1, datum2, "{} != {}".format(datum1, datum2))
+        os.remove(test_output_bag)
+
+if __name__ == '__main__':
+    global start_time
+    start_time = datetime.datetime.today()
+    rostest.rosrun('loam_velodyne', 'test_bag', TestBag)

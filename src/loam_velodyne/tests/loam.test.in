@@ -1,0 +1,14 @@
+<?xml version="1.0" ?>
+<launch>
+
+  <param name="use_sim_time" value="true"/>
+
+  <node pkg="loam_velodyne" type="scanRegistration" name="scanRegistration"/>
+  <node pkg="loam_velodyne" type="laserOdometry" name="laserOdometry"/>
+  <node pkg="loam_velodyne" type="laserMapping" name="laserMapping"/>
+  <node pkg="loam_velodyne" type="transformMaintenance" name="transformMaintenance"/>
+
+  <node name="player" pkg="rosbag" type="play" args="@PROJECT_BINARY_DIR@/test_data/test_input.bag --clock -d1"/>
+  <node name="recorder" pkg="rosbag" type="record" args="/laser_cloud_surround /laser_odom_to_init /tf -O @PROJECT_BINARY_DIR@/test_output.bag" launch-prefix="timeout -s INT 32" />
+  <test test-name="bag_test" pkg="loam_velodyne" type="bag_test" args="@PROJECT_BINARY_DIR@/test_data/test_comparison.bag @PROJECT_BINARY_DIR@/test_output.bag"/>
+</launch>
