@@ -250,7 +250,7 @@ void AccumulateIMUShift()
   }
 }
 
-//接收点云数据，velodyne雷达坐标系为x轴向前，y轴向左，z轴向上的右手坐标系
+//接收点云数据，velodyne雷达坐标系安装为x轴向前，y轴向左，z轴向上的右手坐标系
 void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
 {
   if (!systemInited) {//丢弃前20个点云数据
@@ -275,13 +275,13 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
   pcl::removeNaNFromPointCloud(laserCloudIn, laserCloudIn, indices);
   //点云点的数量
   int cloudSize = laserCloudIn.points.size();
-  //lidar scan开始点的旋转角
+  //lidar scan开始点的旋转角,atan2范围[-pi,+pi],计算旋转角时取负号是因为velodyne是顺时针旋转
   float startOri = -atan2(laserCloudIn.points[0].y, laserCloudIn.points[0].x);
-  //lidar scan结束点的旋转角
+  //lidar scan结束点的旋转角，加2*pi使点云旋转周期为2*pi
   float endOri = -atan2(laserCloudIn.points[cloudSize - 1].y,
                         laserCloudIn.points[cloudSize - 1].x) + 2 * M_PI;
 
-  //结束方位角与开始方位角差值控制在(PI,3*PI)范围
+  //结束方位角与开始方位角差值控制在(PI,3*PI)范围，允许lidar不是一个圆周扫描
   //正常情况下在这个范围内：pi < endOri - startOri < 3*pi，异常则修正
   if (endOri - startOri > 3 * M_PI) {
     endOri -= 2 * M_PI;
@@ -294,15 +294,15 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
   PointType point;
   std::vector<pcl::PointCloud<PointType> > laserCloudScans(N_SCANS);
   for (int i = 0; i < cloudSize; i++) {
-      //坐标轴交换，velodyne lidar的坐标系也转换到z轴向前，x轴向左的右手坐标系
+    //坐标轴交换，velodyne lidar的坐标系也转换到z轴向前，x轴向左的右手坐标系
     point.x = laserCloudIn.points[i].y;
     point.y = laserCloudIn.points[i].z;
     point.z = laserCloudIn.points[i].x;
 
-    //计算点的仰角(单位：度),根据仰角排列激光线号，velodyne每两个scan之间间隔2度
+    //计算点的仰角(根据lidar文档垂直角计算公式),根据仰角排列激光线号，velodyne每两个scan之间间隔2度
     float angle = atan(point.y / sqrt(point.x * point.x + point.z * point.z)) * 180 / M_PI;
     int scanID;
-    //四舍五入后的仰角(加减0.5截断效果等于四舍五入)
+    //仰角四舍五入(加减0.5截断效果等于四舍五入)
     int roundedAngle = int(angle + (angle<0.0?-0.5:+0.5)); 
     if (roundedAngle > 0){
       scanID = roundedAngle;
