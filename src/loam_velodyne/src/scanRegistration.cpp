@@ -36,8 +36,7 @@
 /*imu为x轴向前,y轴向左,z轴向上的右手坐标系，
   velodyne lidar被安装为x轴向前,y轴向左,z轴向上的右手坐标系，
   scanRegistration会把两者通过交换坐标轴，都统一到z轴向前,x轴向左,y轴向上的右手坐标系
-  ，因为J. Zhang的论文里面使用的品牌的lidar的坐标系为这样的坐标系，这样代码统一后
-  代码改动量最小
+  ，这是J. Zhang的论文里面使用的坐标系
 *******************************************************************************/
 
 #include <cmath>
@@ -62,17 +61,18 @@ using std::sin;
 using std::cos;
 using std::atan2;
 
+//扫描周期, velodyne频率10Hz，周期0.1s
 const double scanPeriod = 0.1;
 
 //初始化控制变量
-const int systemDelay = 20;
+const int systemDelay = 20;//弃用前20帧初始数据
 int systemInitCount = 0;
 bool systemInited = false;
 
 //激光雷达线数
 const int N_SCANS = 16;
 
-//点云曲率
+//点云曲率, 40000为一帧点云中点的最大数量
 float cloudCurvature[40000];
 //曲率点对应的序号
 int cloudSortInd[40000];
@@ -85,7 +85,7 @@ int cloudLabel[40000];
 int imuPointerFront = 0;
 //imu最新收到的点在数组中的位置
 int imuPointerLast = -1;
-//循环数组长度
+//imu循环队列长度
 const int imuQueLength = 200;
 
 //点云数据开始第一个点的位移/速度/欧拉角
@@ -214,21 +214,23 @@ void AccumulateIMUShift()
   float accY = imuAccY[imuPointerLast];
   float accZ = imuAccZ[imuPointerLast];
 
+  //将当前时刻的加速度值绕交换过的ZXY固定轴（原XYZ）分别旋转(-roll, -pitch, -yaw)角得到未叠加旋转的上一个点的加速度值
+  //绕z轴
   float x1 = cos(roll) * accX - sin(roll) * accY;
   float y1 = sin(roll) * accX + cos(roll) * accY;
   float z1 = accZ;
-
+  //绕x轴
   float x2 = x1;
   float y2 = cos(pitch) * y1 - sin(pitch) * z1;
   float z2 = sin(pitch) * y1 + cos(pitch) * z1;
-
+  //绕y轴
   accX = cos(yaw) * x2 + sin(yaw) * z2;
   accY = y2;
   accZ = -sin(yaw) * x2 + cos(yaw) * z2;
 
-  //前一个imu点
+  //上一个imu点
   int imuPointerBack = (imuPointerLast + imuQueLength - 1) % imuQueLength;
-  //前一个点到当前点所经历的时间，即计算imu测量周期
+  //上一个点到当前点所经历的时间，即计算imu测量周期
   double timeDiff = imuTime[imuPointerLast] - imuTime[imuPointerBack];
   //要求imu的频率至少比lidar高，这样的imu信息才使用，后面校正也才有意义
   if (timeDiff < scanPeriod) {
@@ -745,12 +747,12 @@ void imuHandler(const sensor_msgs::Imu::ConstPtr& imuIn)
 {
   double roll, pitch, yaw;
   tf::Quaternion orientation;
-  //将IMU消息转换为四元数
+  //convert Quaternion msg to Quaternion
   tf::quaternionMsgToTF(imuIn->orientation, orientation);
-  //将四元数转换为欧拉角
+  //This will get the roll pitch and yaw from the matrix about fixed axes X, Y, Z respectively.
   tf::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
 
-  //求出xyz方向的加速度实际值，并进行坐标轴交换，统一到z轴向前,x轴向左的右手坐标系
+  //求出xyz方向的加速度实际值，并进行坐标轴交换，统一到z轴向前,x轴向左的右手坐标系, 交换过后RPY对应fixed axes ZXY(RPY---ZXY)
   float accX = imuIn->linear_acceleration.y - sin(roll) * cos(pitch) * 9.81;
   float accY = imuIn->linear_acceleration.z - cos(roll) * cos(pitch) * 9.81;
   float accZ = imuIn->linear_acceleration.x + sin(pitch) * 9.81;
