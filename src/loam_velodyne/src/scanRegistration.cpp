@@ -131,23 +131,23 @@ ros::Publisher pubImuTrans;
 //计算点云中的点相对第一个开始点的由于加减速运动产生的位移畸变
 void ShiftToStartIMU(float pointTime)
 {
-    //计算相对于第一个点由于加减速产生的畸变位移量，如果做匀速运动，则左值为0；若加速运动，则左值大于0；若减速运动，则左值小于0
+  //计算相对于第一个点由于加减速产生的畸变位移
+  //imuShiftFromStartCur = imuShiftCur - (imuShiftStart + imuVeloStart * pointTime)
   imuShiftFromStartXCur = imuShiftXCur - imuShiftXStart - imuVeloXStart * pointTime;
   imuShiftFromStartYCur = imuShiftYCur - imuShiftYStart - imuVeloYStart * pointTime;
   imuShiftFromStartZCur = imuShiftZCur - imuShiftZStart - imuVeloZStart * pointTime;
 
-  //畸变位移量以第一个点的初始角度作旋转
-  //航向角旋转
+  //绕y轴旋转imuYawStart
   float x1 = cos(imuYawStart) * imuShiftFromStartXCur - sin(imuYawStart) * imuShiftFromStartZCur;
   float y1 = imuShiftFromStartYCur;
   float z1 = sin(imuYawStart) * imuShiftFromStartXCur + cos(imuYawStart) * imuShiftFromStartZCur;
 
-  //俯仰角旋转
+  //绕x轴旋转imuPitchStart
   float x2 = x1;
   float y2 = cos(imuPitchStart) * y1 + sin(imuPitchStart) * z1;
   float z2 = -sin(imuPitchStart) * y1 + cos(imuPitchStart) * z1;
 
-  //翻滚角旋转
+  //绕z轴旋转imuRollStart
   imuShiftFromStartXCur = cos(imuRollStart) * x2 + sin(imuRollStart) * y2;
   imuShiftFromStartYCur = -sin(imuRollStart) * x2 + cos(imuRollStart) * y2;
   imuShiftFromStartZCur = z2;
@@ -156,19 +156,23 @@ void ShiftToStartIMU(float pointTime)
 //计算点云中的点相对第一个开始点由于加减速产生的的速度畸变（增量）
 void VeloToStartIMU()
 {
+  //计算相对于第一个点由于加减速产生的畸变速度
   imuVeloFromStartXCur = imuVeloXCur - imuVeloXStart;
   imuVeloFromStartYCur = imuVeloYCur - imuVeloYStart;
   imuVeloFromStartZCur = imuVeloZCur - imuVeloZStart;
 
   //速度增量以第一个点的初始角度作旋转
+  //绕y轴旋转imuYawStart
   float x1 = cos(imuYawStart) * imuVeloFromStartXCur - sin(imuYawStart) * imuVeloFromStartZCur;
   float y1 = imuVeloFromStartYCur;
   float z1 = sin(imuYawStart) * imuVeloFromStartXCur + cos(imuYawStart) * imuVeloFromStartZCur;
 
+  //绕x轴旋转imuPitchStart
   float x2 = x1;
   float y2 = cos(imuPitchStart) * y1 + sin(imuPitchStart) * z1;
   float z2 = -sin(imuPitchStart) * y1 + cos(imuPitchStart) * z1;
 
+  //绕z轴旋转imuRollStart
   imuVeloFromStartXCur = cos(imuRollStart) * x2 + sin(imuRollStart) * y2;
   imuVeloFromStartYCur = -sin(imuRollStart) * x2 + cos(imuRollStart) * y2;
   imuVeloFromStartZCur = z2;
@@ -177,28 +181,33 @@ void VeloToStartIMU()
 //点云中每个点的坐标根据当前的欧拉角和点云第一个点的欧拉角进行旋转，去除方向畸变和加减速产生的位移畸变
 void TransformToStartIMU(PointType *p)
 {
-    //以当前的欧拉角作旋转
+  //绕z轴旋转(-imuRollCur)
   float x1 = cos(imuRollCur) * p->x - sin(imuRollCur) * p->y;
   float y1 = sin(imuRollCur) * p->x + cos(imuRollCur) * p->y;
   float z1 = p->z;
 
+  //绕x轴旋转(-imuPitchCur)
   float x2 = x1;
   float y2 = cos(imuPitchCur) * y1 - sin(imuPitchCur) * z1;
   float z2 = sin(imuPitchCur) * y1 + cos(imuPitchCur) * z1;
 
+  //绕y轴旋转(-imuYawCur)
   float x3 = cos(imuYawCur) * x2 + sin(imuYawCur) * z2;
   float y3 = y2;
   float z3 = -sin(imuYawCur) * x2 + cos(imuYawCur) * z2;
 
   //增加初始点的旋转量，并消除加减速运动畸变
+  //绕y轴旋转imuYawStart
   float x4 = cos(imuYawStart) * x3 - sin(imuYawStart) * z3;
   float y4 = y3;
   float z4 = sin(imuYawStart) * x3 + cos(imuYawStart) * z3;
 
+  //绕x轴旋转imuPitchStart
   float x5 = x4;
   float y5 = cos(imuPitchStart) * y4 + sin(imuPitchStart) * z4;
   float z5 = -sin(imuPitchStart) * y4 + cos(imuPitchStart) * z4;
 
+  //绕z轴旋转imuRollStart，然后叠加平移量
   p->x = cos(imuRollStart) * x5 + sin(imuRollStart) * y5 + imuShiftFromStartXCur;
   p->y = -sin(imuRollStart) * x5 + cos(imuRollStart) * y5 + imuShiftFromStartYCur;
   p->z = z5 + imuShiftFromStartZCur;
@@ -215,15 +224,15 @@ void AccumulateIMUShift()
   float accZ = imuAccZ[imuPointerLast];
 
   //将当前时刻的加速度值绕交换过的ZXY固定轴（原XYZ）分别旋转(-roll, -pitch, -yaw)角得到未叠加旋转的上一个点的加速度值
-  //绕z轴
+  //绕z轴旋转(-roll)
   float x1 = cos(roll) * accX - sin(roll) * accY;
   float y1 = sin(roll) * accX + cos(roll) * accY;
   float z1 = accZ;
-  //绕x轴
+  //绕x轴旋转(-pitch)
   float x2 = x1;
   float y2 = cos(pitch) * y1 - sin(pitch) * z1;
   float z2 = sin(pitch) * y1 + cos(pitch) * z1;
-  //绕y轴
+  //绕y轴旋转(-yaw)
   accX = cos(yaw) * x2 + sin(yaw) * z2;
   accY = y2;
   accZ = -sin(yaw) * x2 + cos(yaw) * z2;
@@ -340,13 +349,14 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
       } 
     }
 
-    //-0.5 < relTime < 1.5（点旋转的角度与整个周期旋转角度的比率）
+    //-0.5 < relTime < 1.5（点旋转的角度与整个周期旋转角度的比率, 即点云中点的相对时间）
     float relTime = (ori - startOri) / (endOri - startOri);
-    //点强度=线号+点时间（即一个整数+一个小数，整数部分是线号，小数部分是该点相对该点云起点经历的时间）,匀速扫描：根据当前扫描的角度和扫描周期计算相对扫描起始位置的时间
+    //点强度=线号+点相对时间（即一个整数+一个小数，整数部分是线号，小数部分是该点的相对时间）,匀速扫描：根据当前扫描的角度和扫描周期计算相对扫描起始位置的时间
     point.intensity = scanID + scanPeriod * relTime;
 
+    //点时间=点云时间+周期时间
     if (imuPointerLast >= 0) {//如果收到IMU数据,使用IMU矫正点云畸变
-      float pointTime = relTime * scanPeriod;
+      float pointTime = relTime * scanPeriod;//计算点的周期时间
       //寻找是否有点云的时间戳小于IMU的时间戳的IMU位置:imuPointerFront
       while (imuPointerFront != imuPointerLast) {
         if (timeScanCur + pointTime < imuTime[imuPointerFront]) {
@@ -367,8 +377,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
         imuShiftXCur = imuShiftX[imuPointerFront];
         imuShiftYCur = imuShiftY[imuPointerFront];
         imuShiftZCur = imuShiftZ[imuPointerFront];
-      } else {//找到了点云时间戳小于IMU时间戳的IMU位置,则该点必处于imuPointerBack和imuPointerLast之间，据此计算点云点的速度，位移和欧拉角
-          //回溯找上一个点,该点必定被跨过，也即该点云点会被Back点和Last点夹逼，提高imu频率，夹逼距离越近，后面计算越准(前提：IMU够准)
+      } else {//找到了点云时间戳小于IMU时间戳的IMU位置,则该点必处于imuPointerBack和imuPointerFront之间，据此线性插值，计算点云点的速度，位移和欧拉角
         int imuPointerBack = (imuPointerFront + imuQueLength - 1) % imuQueLength;
         //按时间距离计算权重分配比率,也即线性插值
         float ratioFront = (timeScanCur + pointTime - imuTime[imuPointerBack]) 
@@ -395,8 +404,8 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
         imuShiftYCur = imuShiftY[imuPointerFront] * ratioFront + imuShiftY[imuPointerBack] * ratioBack;
         imuShiftZCur = imuShiftZ[imuPointerFront] * ratioFront + imuShiftZ[imuPointerBack] * ratioBack;
       }
-      //如果是第一个点,记住点云起始位置的速度，位移，欧拉角
-      if (i == 0) {
+
+      if (i == 0) {//如果是第一个点,记住点云起始位置的速度，位移，欧拉角
         imuRollStart = imuRollCur;
         imuPitchStart = imuPitchCur;
         imuYawStart = imuYawCur;
