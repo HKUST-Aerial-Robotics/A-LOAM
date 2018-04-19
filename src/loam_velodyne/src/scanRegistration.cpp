@@ -37,6 +37,7 @@
   velodyne lidar被安装为x轴向前,y轴向左,z轴向上的右手坐标系，
   scanRegistration会把两者通过交换坐标轴，都统一到z轴向前,x轴向左,y轴向上的右手坐标系
   ，这是J. Zhang的论文里面使用的坐标系
+  交换后：R = Ry(yaw)*Rx(pitch)*Rz(roll)
 *******************************************************************************/
 
 #include <cmath>
@@ -128,59 +129,71 @@ ros::Publisher pubSurfPointsFlat;
 ros::Publisher pubSurfPointsLessFlat;
 ros::Publisher pubImuTrans;
 
-//计算点云中的点相对第一个开始点的由于加减速运动产生的位移畸变
+//计算局部坐标系下点云中的点相对第一个开始点的由于加减速运动产生的位移畸变
 void ShiftToStartIMU(float pointTime)
 {
-  //计算相对于第一个点由于加减速产生的畸变位移
+  //计算相对于第一个点由于加减速产生的畸变位移(全局坐标系下畸变位移量delta_Tg)
   //imuShiftFromStartCur = imuShiftCur - (imuShiftStart + imuVeloStart * pointTime)
   imuShiftFromStartXCur = imuShiftXCur - imuShiftXStart - imuVeloXStart * pointTime;
   imuShiftFromStartYCur = imuShiftYCur - imuShiftYStart - imuVeloYStart * pointTime;
   imuShiftFromStartZCur = imuShiftZCur - imuShiftZStart - imuVeloZStart * pointTime;
 
-  //绕y轴旋转(-imuYawStart)
+  /********************************************************************************
+  Rz(pitch).inverse * Rx(pitch).inverse * Ry(yaw).inverse * delta_Tg
+  transfrom from the global frame to the local frame
+  *********************************************************************************/
+
+  //绕y轴旋转(-imuYawStart)，即Ry(yaw).inverse
   float x1 = cos(imuYawStart) * imuShiftFromStartXCur - sin(imuYawStart) * imuShiftFromStartZCur;
   float y1 = imuShiftFromStartYCur;
   float z1 = sin(imuYawStart) * imuShiftFromStartXCur + cos(imuYawStart) * imuShiftFromStartZCur;
 
-  //绕x轴旋转(-imuPitchStart)
+  //绕x轴旋转(-imuPitchStart)，即Rx(pitch).inverse
   float x2 = x1;
   float y2 = cos(imuPitchStart) * y1 + sin(imuPitchStart) * z1;
   float z2 = -sin(imuPitchStart) * y1 + cos(imuPitchStart) * z1;
 
-  //绕z轴旋转(-imuRollStart)
+  //绕z轴旋转(-imuRollStart)，即Rz(pitch).inverse
   imuShiftFromStartXCur = cos(imuRollStart) * x2 + sin(imuRollStart) * y2;
   imuShiftFromStartYCur = -sin(imuRollStart) * x2 + cos(imuRollStart) * y2;
   imuShiftFromStartZCur = z2;
 }
 
-//计算点云中的点相对第一个开始点由于加减速产生的的速度畸变（增量）
+//计算局部坐标系下点云中的点相对第一个开始点由于加减速产生的的速度畸变（增量）
 void VeloToStartIMU()
 {
-  //计算相对于第一个点由于加减速产生的畸变速度
+  //计算相对于第一个点由于加减速产生的畸变速度(全局坐标系下畸变速度增量delta_Vg)
   imuVeloFromStartXCur = imuVeloXCur - imuVeloXStart;
   imuVeloFromStartYCur = imuVeloYCur - imuVeloYStart;
   imuVeloFromStartZCur = imuVeloZCur - imuVeloZStart;
 
-  //速度增量以第一个点的初始角度作旋转
-  //绕y轴旋转(-imuYawStart)
+  /********************************************************************************
+    Rz(pitch).inverse * Rx(pitch).inverse * Ry(yaw).inverse * delta_Vg
+    transfrom from the global frame to the local frame
+  *********************************************************************************/
+  
+  //绕y轴旋转(-imuYawStart)，即Ry(yaw).inverse
   float x1 = cos(imuYawStart) * imuVeloFromStartXCur - sin(imuYawStart) * imuVeloFromStartZCur;
   float y1 = imuVeloFromStartYCur;
   float z1 = sin(imuYawStart) * imuVeloFromStartXCur + cos(imuYawStart) * imuVeloFromStartZCur;
 
-  //绕x轴旋转(-imuPitchStart)
+  //绕x轴旋转(-imuPitchStart)，即Rx(pitch).inverse
   float x2 = x1;
   float y2 = cos(imuPitchStart) * y1 + sin(imuPitchStart) * z1;
   float z2 = -sin(imuPitchStart) * y1 + cos(imuPitchStart) * z1;
 
-  //绕z轴旋转(-imuRollStart)
+  //绕z轴旋转(-imuRollStart)，即Rz(pitch).inverse
   imuVeloFromStartXCur = cos(imuRollStart) * x2 + sin(imuRollStart) * y2;
   imuVeloFromStartYCur = -sin(imuRollStart) * x2 + cos(imuRollStart) * y2;
   imuVeloFromStartZCur = z2;
 }
 
-//点云中每个点的坐标根据当前的欧拉角和点云第一个点的欧拉角进行旋转，去除方向畸变和加减速产生的位移畸变
+//去除点云加减速产生的位移畸变
 void TransformToStartIMU(PointType *p)
 {
+  /********************************************************************************
+    Ry*Rx*Rz*Pl, transform point to the global frame
+  *********************************************************************************/
   //绕z轴旋转(imuRollCur)
   float x1 = cos(imuRollCur) * p->x - sin(imuRollCur) * p->y;
   float y1 = sin(imuRollCur) * p->x + cos(imuRollCur) * p->y;
@@ -196,7 +209,11 @@ void TransformToStartIMU(PointType *p)
   float y3 = y2;
   float z3 = -sin(imuYawCur) * x2 + cos(imuYawCur) * z2;
 
-  //增加初始点的旋转量，并消除加减速运动畸变
+  /********************************************************************************
+    Rz(pitch).inverse * Rx(pitch).inverse * Ry(yaw).inverse * Pg
+    transfrom global points to the local frame
+  *********************************************************************************/
+  
   //绕y轴旋转(-imuYawStart)
   float x4 = cos(imuYawStart) * x3 - sin(imuYawStart) * z3;
   float y4 = y3;
@@ -242,7 +259,7 @@ void AccumulateIMUShift()
   //上一个点到当前点所经历的时间，即计算imu测量周期
   double timeDiff = imuTime[imuPointerLast] - imuTime[imuPointerBack];
   //要求imu的频率至少比lidar高，这样的imu信息才使用，后面校正也才有意义
-  if (timeDiff < scanPeriod) {
+  if (timeDiff < scanPeriod) {//（隐含从静止开始运动）
     //求每个imu时间点的位移与速度,两点之间视为匀加速直线运动
     imuShiftX[imuPointerLast] = imuShiftX[imuPointerBack] + imuVeloX[imuPointerBack] * timeDiff 
                               + accX * timeDiff * timeDiff / 2;
@@ -758,10 +775,11 @@ void imuHandler(const sensor_msgs::Imu::ConstPtr& imuIn)
   tf::Quaternion orientation;
   //convert Quaternion msg to Quaternion
   tf::quaternionMsgToTF(imuIn->orientation, orientation);
-  //This will get the roll pitch and yaw from the matrix about fixed axes X, Y, Z respectively.
+  //This will get the roll pitch and yaw from the matrix about fixed axes X, Y, Z respectively. That's R = Rz(yaw)*Ry(pitch)*Rx(roll).
+  //Here roll pitch yaw is in the global frame
   tf::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
 
-  //减去重力的影响,求出xyz方向的加速度实际值，并进行坐标轴交换，统一到z轴向前,x轴向左的右手坐标系, 交换过后RPY对应fixed axes ZXY(RPY---ZXY)
+  //减去重力的影响,求出xyz方向的加速度实际值，并进行坐标轴交换，统一到z轴向前,x轴向左的右手坐标系, 交换过后RPY对应fixed axes ZXY(RPY---ZXY)。Now R = Ry(yaw)*Rx(pitch)*Rz(roll).
   float accX = imuIn->linear_acceleration.y - sin(roll) * cos(pitch) * 9.81;
   float accY = imuIn->linear_acceleration.z - cos(roll) * cos(pitch) * 9.81;
   float accZ = imuIn->linear_acceleration.x + sin(pitch) * 9.81;
