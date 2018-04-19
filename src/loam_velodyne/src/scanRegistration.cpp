@@ -137,17 +137,17 @@ void ShiftToStartIMU(float pointTime)
   imuShiftFromStartYCur = imuShiftYCur - imuShiftYStart - imuVeloYStart * pointTime;
   imuShiftFromStartZCur = imuShiftZCur - imuShiftZStart - imuVeloZStart * pointTime;
 
-  //绕y轴旋转imuYawStart
+  //绕y轴旋转(-imuYawStart)
   float x1 = cos(imuYawStart) * imuShiftFromStartXCur - sin(imuYawStart) * imuShiftFromStartZCur;
   float y1 = imuShiftFromStartYCur;
   float z1 = sin(imuYawStart) * imuShiftFromStartXCur + cos(imuYawStart) * imuShiftFromStartZCur;
 
-  //绕x轴旋转imuPitchStart
+  //绕x轴旋转(-imuPitchStart)
   float x2 = x1;
   float y2 = cos(imuPitchStart) * y1 + sin(imuPitchStart) * z1;
   float z2 = -sin(imuPitchStart) * y1 + cos(imuPitchStart) * z1;
 
-  //绕z轴旋转imuRollStart
+  //绕z轴旋转(-imuRollStart)
   imuShiftFromStartXCur = cos(imuRollStart) * x2 + sin(imuRollStart) * y2;
   imuShiftFromStartYCur = -sin(imuRollStart) * x2 + cos(imuRollStart) * y2;
   imuShiftFromStartZCur = z2;
@@ -162,17 +162,17 @@ void VeloToStartIMU()
   imuVeloFromStartZCur = imuVeloZCur - imuVeloZStart;
 
   //速度增量以第一个点的初始角度作旋转
-  //绕y轴旋转imuYawStart
+  //绕y轴旋转(-imuYawStart)
   float x1 = cos(imuYawStart) * imuVeloFromStartXCur - sin(imuYawStart) * imuVeloFromStartZCur;
   float y1 = imuVeloFromStartYCur;
   float z1 = sin(imuYawStart) * imuVeloFromStartXCur + cos(imuYawStart) * imuVeloFromStartZCur;
 
-  //绕x轴旋转imuPitchStart
+  //绕x轴旋转(-imuPitchStart)
   float x2 = x1;
   float y2 = cos(imuPitchStart) * y1 + sin(imuPitchStart) * z1;
   float z2 = -sin(imuPitchStart) * y1 + cos(imuPitchStart) * z1;
 
-  //绕z轴旋转imuRollStart
+  //绕z轴旋转(-imuRollStart)
   imuVeloFromStartXCur = cos(imuRollStart) * x2 + sin(imuRollStart) * y2;
   imuVeloFromStartYCur = -sin(imuRollStart) * x2 + cos(imuRollStart) * y2;
   imuVeloFromStartZCur = z2;
@@ -181,33 +181,33 @@ void VeloToStartIMU()
 //点云中每个点的坐标根据当前的欧拉角和点云第一个点的欧拉角进行旋转，去除方向畸变和加减速产生的位移畸变
 void TransformToStartIMU(PointType *p)
 {
-  //绕z轴旋转(-imuRollCur)
+  //绕z轴旋转(imuRollCur)
   float x1 = cos(imuRollCur) * p->x - sin(imuRollCur) * p->y;
   float y1 = sin(imuRollCur) * p->x + cos(imuRollCur) * p->y;
   float z1 = p->z;
 
-  //绕x轴旋转(-imuPitchCur)
+  //绕x轴旋转(imuPitchCur)
   float x2 = x1;
   float y2 = cos(imuPitchCur) * y1 - sin(imuPitchCur) * z1;
   float z2 = sin(imuPitchCur) * y1 + cos(imuPitchCur) * z1;
 
-  //绕y轴旋转(-imuYawCur)
+  //绕y轴旋转(imuYawCur)
   float x3 = cos(imuYawCur) * x2 + sin(imuYawCur) * z2;
   float y3 = y2;
   float z3 = -sin(imuYawCur) * x2 + cos(imuYawCur) * z2;
 
   //增加初始点的旋转量，并消除加减速运动畸变
-  //绕y轴旋转imuYawStart
+  //绕y轴旋转(-imuYawStart)
   float x4 = cos(imuYawStart) * x3 - sin(imuYawStart) * z3;
   float y4 = y3;
   float z4 = sin(imuYawStart) * x3 + cos(imuYawStart) * z3;
 
-  //绕x轴旋转imuPitchStart
+  //绕x轴旋转(-imuPitchStart)
   float x5 = x4;
   float y5 = cos(imuPitchStart) * y4 + sin(imuPitchStart) * z4;
   float z5 = -sin(imuPitchStart) * y4 + cos(imuPitchStart) * z4;
 
-  //绕z轴旋转imuRollStart，然后叠加平移量
+  //绕z轴旋转(-imuRollStart)，然后叠加平移量
   p->x = cos(imuRollStart) * x5 + sin(imuRollStart) * y5 + imuShiftFromStartXCur;
   p->y = -sin(imuRollStart) * x5 + cos(imuRollStart) * y5 + imuShiftFromStartYCur;
   p->z = z5 + imuShiftFromStartZCur;
@@ -223,16 +223,16 @@ void AccumulateIMUShift()
   float accY = imuAccY[imuPointerLast];
   float accZ = imuAccZ[imuPointerLast];
 
-  //将当前时刻的加速度值绕交换过的ZXY固定轴（原XYZ）分别旋转(-roll, -pitch, -yaw)角得到未叠加旋转的上一个点的加速度值
-  //绕z轴旋转(-roll)
+  //将当前时刻的加速度值绕交换过的ZXY固定轴（原XYZ）分别旋转(roll, pitch, yaw)角，转换得到世界坐标系下的加速度值(right hand rule)
+  //绕z轴旋转(roll)
   float x1 = cos(roll) * accX - sin(roll) * accY;
   float y1 = sin(roll) * accX + cos(roll) * accY;
   float z1 = accZ;
-  //绕x轴旋转(-pitch)
+  //绕x轴旋转(pitch)
   float x2 = x1;
   float y2 = cos(pitch) * y1 - sin(pitch) * z1;
   float z2 = sin(pitch) * y1 + cos(pitch) * z1;
-  //绕y轴旋转(-yaw)
+  //绕y轴旋转(yaw)
   accX = cos(yaw) * x2 + sin(yaw) * z2;
   accY = y2;
   accZ = -sin(yaw) * x2 + cos(yaw) * z2;
@@ -243,9 +243,7 @@ void AccumulateIMUShift()
   double timeDiff = imuTime[imuPointerLast] - imuTime[imuPointerBack];
   //要求imu的频率至少比lidar高，这样的imu信息才使用，后面校正也才有意义
   if (timeDiff < scanPeriod) {
-      //计算每个imu点的位移和速度
-
-      //求位移与速度,两点之间加速度取平均加速度(即视为匀加速直线运动)
+    //求每个imu时间点的位移与速度,两点之间视为匀加速直线运动
     imuShiftX[imuPointerLast] = imuShiftX[imuPointerBack] + imuVeloX[imuPointerBack] * timeDiff 
                               + accX * timeDiff * timeDiff / 2;
     imuShiftY[imuPointerLast] = imuShiftY[imuPointerBack] + imuVeloY[imuPointerBack] * timeDiff 
@@ -270,7 +268,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
     return;
   }
 
-  //记录每个scan有曲率的点的开始和结束点序
+  //记录每个scan有曲率的点的开始和结束索引
   std::vector<int> scanStartInd(N_SCANS, 0);
   std::vector<int> scanEndInd(N_SCANS, 0);
   
@@ -455,10 +453,11 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
                 + laserCloud->points[i + 5].z;
     //曲率计算
     cloudCurvature[i] = diffX * diffX + diffY * diffY + diffZ * diffZ;
-    //记录曲率点的位置
+    //记录曲率点的索引
     cloudSortInd[i] = i;
     //初始时，点全未筛选过
     cloudNeighborPicked[i] = 0;
+    //初始化为less flat点
     cloudLabel[i] = 0;
 
     //每个scan，只有第一个符合的点会进来，因为每个scan的点都在一起存放
@@ -551,7 +550,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
   pcl::PointCloud<PointType> surfPointsFlat;
   pcl::PointCloud<PointType> surfPointsLessFlat;
 
-  //将每条线上的点分入相应的类别：平面点和拐点
+  //将每条线上的点分入相应的类别：边沿点和平面点
   for (int i = 0; i < N_SCANS; i++) {
     pcl::PointCloud<PointType>::Ptr surfPointsLessFlatScan(new pcl::PointCloud<PointType>);
     //将每个scan的曲率点分成6等份处理,确保周围都有点被选作特征点
@@ -583,11 +582,11 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
             cloudCurvature[ind] > 0.1) {
         
           largestPickedNum++;
-          if (largestPickedNum <= 2) {//挑选曲率最大的前2个点放入最大的点集合
+          if (largestPickedNum <= 2) {//挑选曲率最大的前2个点放入sharp点集合
             cloudLabel[ind] = 2;//2代表点曲率很大
             cornerPointsSharp.push_back(laserCloud->points[ind]);
             cornerPointsLessSharp.push_back(laserCloud->points[ind]);
-          } else if (largestPickedNum <= 20) {//挑选曲率最大的前20个点放入比较尖锐的点集合
+          } else if (largestPickedNum <= 20) {//挑选曲率最大的前20个点放入less sharp点集合
             cloudLabel[ind] = 1;//1代表点曲率比较尖锐
             cornerPointsLessSharp.push_back(laserCloud->points[ind]);
           } else {
@@ -673,7 +672,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
         }
       }
 
-      //将剩余的点（包括之前被排除的点）全部归入平面点中比较不平坦的类别中
+      //将剩余的点（包括之前被排除的点）全部归入平面点中less flat类别中
       for (int k = sp; k <= ep; k++) {
         if (cloudLabel[k] <= 0) {
           surfPointsLessFlatScan->push_back(laserCloud->points[k]);
@@ -681,25 +680,25 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
       }
     }
 
-    //对每个分段曲率比较小的点进行体素栅格滤波
+    //由于less flat点最多，对每个分段less flat的点进行体素栅格滤波
     pcl::PointCloud<PointType> surfPointsLessFlatScanDS;
     pcl::VoxelGrid<PointType> downSizeFilter;
     downSizeFilter.setInputCloud(surfPointsLessFlatScan);
     downSizeFilter.setLeafSize(0.2, 0.2, 0.2);
     downSizeFilter.filter(surfPointsLessFlatScanDS);
 
-    //曲率比较小的点滤波后全部加和赋值给曲率比较小的点集
+    //less flat点汇总
     surfPointsLessFlat += surfPointsLessFlatScanDS;
   }
 
-  //publich消除畸变后的所有的点
+  //publich消除非匀速运动畸变后的所有的点
   sensor_msgs::PointCloud2 laserCloudOutMsg;
   pcl::toROSMsg(*laserCloud, laserCloudOutMsg);
   laserCloudOutMsg.header.stamp = laserCloudMsg->header.stamp;
   laserCloudOutMsg.header.frame_id = "/camera";
   pubLaserCloud.publish(laserCloudOutMsg);
 
-  //publich消除畸变后的平面点和边沿点
+  //publich消除非匀速运动畸变后的平面点和边沿点
   sensor_msgs::PointCloud2 cornerPointsSharpMsg;
   pcl::toROSMsg(cornerPointsSharp, cornerPointsSharpMsg);
   cornerPointsSharpMsg.header.stamp = laserCloudMsg->header.stamp;
@@ -731,6 +730,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
   imuTrans.points[0].y = imuYawStart;
   imuTrans.points[0].z = imuRollStart;
 
+  //最后一个点的欧拉角
   imuTrans.points[1].x = imuPitchCur;
   imuTrans.points[1].y = imuYawCur;
   imuTrans.points[1].z = imuRollCur;
@@ -761,7 +761,7 @@ void imuHandler(const sensor_msgs::Imu::ConstPtr& imuIn)
   //This will get the roll pitch and yaw from the matrix about fixed axes X, Y, Z respectively.
   tf::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
 
-  //求出xyz方向的加速度实际值，并进行坐标轴交换，统一到z轴向前,x轴向左的右手坐标系, 交换过后RPY对应fixed axes ZXY(RPY---ZXY)
+  //减去重力的影响,求出xyz方向的加速度实际值，并进行坐标轴交换，统一到z轴向前,x轴向左的右手坐标系, 交换过后RPY对应fixed axes ZXY(RPY---ZXY)
   float accX = imuIn->linear_acceleration.y - sin(roll) * cos(pitch) * 9.81;
   float accY = imuIn->linear_acceleration.z - cos(roll) * cos(pitch) * 9.81;
   float accZ = imuIn->linear_acceleration.x + sin(pitch) * 9.81;
