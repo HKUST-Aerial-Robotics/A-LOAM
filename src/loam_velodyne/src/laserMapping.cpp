@@ -252,16 +252,19 @@ void transformUpdate()
 //根据调整计算后转换矩阵，将点注册到起始位置为原点的世界坐标系下
 void pointAssociateToMap(PointType const * const pi, PointType * const po)
 {
+  //绕z轴旋转（transformTobeMapped[2]）
   float x1 = cos(transformTobeMapped[2]) * pi->x
            - sin(transformTobeMapped[2]) * pi->y;
   float y1 = sin(transformTobeMapped[2]) * pi->x
            + cos(transformTobeMapped[2]) * pi->y;
   float z1 = pi->z;
 
+  //绕x轴旋转（transformTobeMapped[0]）
   float x2 = x1;
   float y2 = cos(transformTobeMapped[0]) * y1 - sin(transformTobeMapped[0]) * z1;
   float z2 = sin(transformTobeMapped[0]) * y1 + cos(transformTobeMapped[0]) * z1;
 
+  //绕y轴旋转（transformTobeMapped[2]），再平移
   po->x = cos(transformTobeMapped[1]) * x2 + sin(transformTobeMapped[1]) * z2
         + transformTobeMapped[3];
   po->y = y2 + transformTobeMapped[4];
@@ -273,16 +276,19 @@ void pointAssociateToMap(PointType const * const pi, PointType * const po)
 //点平移旋转
 void pointAssociateTobeMapped(PointType const * const pi, PointType * const po)
 {
+  //平移后绕y轴旋转（-transformTobeMapped[1]）
   float x1 = cos(transformTobeMapped[1]) * (pi->x - transformTobeMapped[3]) 
            - sin(transformTobeMapped[1]) * (pi->z - transformTobeMapped[5]);
   float y1 = pi->y - transformTobeMapped[4];
   float z1 = sin(transformTobeMapped[1]) * (pi->x - transformTobeMapped[3]) 
            + cos(transformTobeMapped[1]) * (pi->z - transformTobeMapped[5]);
 
+  //绕x轴旋转（-transformTobeMapped[0]）
   float x2 = x1;
   float y2 = cos(transformTobeMapped[0]) * y1 + sin(transformTobeMapped[0]) * z1;
   float z2 = -sin(transformTobeMapped[0]) * y1 + cos(transformTobeMapped[0]) * z1;
 
+  //绕z轴旋转（-transformTobeMapped[2]）
   po->x = cos(transformTobeMapped[2]) * x2
         + sin(transformTobeMapped[2]) * y2;
   po->y = -sin(transformTobeMapped[2]) * x2

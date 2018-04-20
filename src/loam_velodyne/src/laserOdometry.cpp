@@ -69,26 +69,38 @@ bool newSurfPointsLessFlat = false;
 bool newLaserCloudFullRes = false;
 bool newImuTrans = false;
 
+//receive sharp points
 pcl::PointCloud<PointType>::Ptr cornerPointsSharp(new pcl::PointCloud<PointType>());
+//receive less sharp points
 pcl::PointCloud<PointType>::Ptr cornerPointsLessSharp(new pcl::PointCloud<PointType>());
+//receive flat points
 pcl::PointCloud<PointType>::Ptr surfPointsFlat(new pcl::PointCloud<PointType>());
+//receive less flat points
 pcl::PointCloud<PointType>::Ptr surfPointsLessFlat(new pcl::PointCloud<PointType>());
+//less sharp points of last frame
 pcl::PointCloud<PointType>::Ptr laserCloudCornerLast(new pcl::PointCloud<PointType>());
+//less flat points of last frame
 pcl::PointCloud<PointType>::Ptr laserCloudSurfLast(new pcl::PointCloud<PointType>());
 pcl::PointCloud<PointType>::Ptr laserCloudOri(new pcl::PointCloud<PointType>());
 pcl::PointCloud<PointType>::Ptr coeffSel(new pcl::PointCloud<PointType>());
+//receive all points
 pcl::PointCloud<PointType>::Ptr laserCloudFullRes(new pcl::PointCloud<PointType>());
+//receive imu info
 pcl::PointCloud<pcl::PointXYZ>::Ptr imuTrans(new pcl::PointCloud<pcl::PointXYZ>());
+//kd-tree built by less sharp points of last frame
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeCornerLast(new pcl::KdTreeFLANN<PointType>());
+//kd-tree built by less flat points of last frame
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeSurfLast(new pcl::KdTreeFLANN<PointType>());
 
 int laserCloudCornerLastNum;
 int laserCloudSurfLastNum;
 
+//unused
 int pointSelCornerInd[40000];
 float pointSearchCornerInd1[40000];
 float pointSearchCornerInd2[40000];
 
+//unused
 int pointSelSurfInd[40000];
 float pointSearchSurfInd1[40000];
 float pointSearchSurfInd2[40000];
@@ -106,7 +118,7 @@ float imuVeloFromStartX = 0, imuVeloFromStartY = 0, imuVeloFromStartZ = 0;
 //点云中的点相对开始位置去除因匀速运动产生的畸变,转换完成之后点云好像就在lidar每帧扫描起始位置位置静止不动扫描得到的
 void TransformToStart(PointType const * const pi, PointType * const po)
 {
-    //插值系数计算，云中每个点的相对时间/点云周期10
+  //插值系数计算，云中每个点的相对时间/点云周期10
   float s = 10 * (pi->intensity - int(pi->intensity));
 
   //线性插值：根据每个点在点云中的相对位置关系，乘以相应的旋转平移系数
@@ -117,15 +129,17 @@ void TransformToStart(PointType const * const pi, PointType * const po)
   float ty = s * transform[4];
   float tz = s * transform[5];
 
-  //平移旋转
+  //平移后绕z轴旋转（-rz）
   float x1 = cos(rz) * (pi->x - tx) + sin(rz) * (pi->y - ty);
   float y1 = -sin(rz) * (pi->x - tx) + cos(rz) * (pi->y - ty);
   float z1 = (pi->z - tz);
 
+  //绕x轴旋转（-rx）
   float x2 = x1;
   float y2 = cos(rx) * y1 + sin(rx) * z1;
   float z2 = -sin(rx) * y1 + cos(rx) * z1;
 
+  //绕y轴旋转（-ry）
   po->x = cos(ry) * x2 - sin(ry) * z2;
   po->y = y2;
   po->z = sin(ry) * x2 + cos(ry) * z2;
@@ -135,7 +149,7 @@ void TransformToStart(PointType const * const pi, PointType * const po)
 //点云中的点相对结束位置去除因匀速运动产生的畸变,转换完成之后点云好像就在lidar每帧扫描结束位置位置静止不动扫描得到的
 void TransformToEnd(PointType const * const pi, PointType * const po)
 {
-    //插值系数计算
+  //插值系数计算
   float s = 10 * (pi->intensity - int(pi->intensity));
 
   float rx = s * transform[0];
@@ -145,15 +159,17 @@ void TransformToEnd(PointType const * const pi, PointType * const po)
   float ty = s * transform[4];
   float tz = s * transform[5];
 
-  //平移旋转矫正运动畸变
+  //平移后绕z轴旋转（-rz）
   float x1 = cos(rz) * (pi->x - tx) + sin(rz) * (pi->y - ty);
   float y1 = -sin(rz) * (pi->x - tx) + cos(rz) * (pi->y - ty);
   float z1 = (pi->z - tz);
 
+  //绕x轴旋转（-rx）
   float x2 = x1;
   float y2 = cos(rx) * y1 + sin(rx) * z1;
   float z2 = -sin(rx) * y1 + cos(rx) * z1;
 
+  //绕y轴旋转（-ry）
   float x3 = cos(ry) * x2 - sin(ry) * z2;
   float y3 = y2;
   float z3 = sin(ry) * x2 + cos(ry) * z2;//求出了相对于起始点校正的坐标
@@ -165,43 +181,49 @@ void TransformToEnd(PointType const * const pi, PointType * const po)
   ty = transform[4];
   tz = transform[5];
 
-  //平移旋转到扫描结束位置
+  //绕y轴旋转（ry）
   float x4 = cos(ry) * x3 + sin(ry) * z3;
   float y4 = y3;
   float z4 = -sin(ry) * x3 + cos(ry) * z3;
 
+  //绕x轴旋转（rx）
   float x5 = x4;
   float y5 = cos(rx) * y4 - sin(rx) * z4;
   float z5 = sin(rx) * y4 + cos(rx) * z4;
 
+  //绕z轴旋转（rz），再平移
   float x6 = cos(rz) * x5 - sin(rz) * y5 + tx;
   float y6 = sin(rz) * x5 + cos(rz) * y5 + ty;
   float z6 = z5 + tz;
 
-  //先平移再旋转，相对于第一个点
+  //平移后绕z轴旋转（imuRollStart）
   float x7 = cos(imuRollStart) * (x6 - imuShiftFromStartX) 
            - sin(imuRollStart) * (y6 - imuShiftFromStartY);
   float y7 = sin(imuRollStart) * (x6 - imuShiftFromStartX) 
            + cos(imuRollStart) * (y6 - imuShiftFromStartY);
   float z7 = z6 - imuShiftFromStartZ;
 
+  //绕x轴旋转（imuPitchStart）
   float x8 = x7;
   float y8 = cos(imuPitchStart) * y7 - sin(imuPitchStart) * z7;
   float z8 = sin(imuPitchStart) * y7 + cos(imuPitchStart) * z7;
 
+  //绕y轴旋转（imuYawStart）
   float x9 = cos(imuYawStart) * x8 + sin(imuYawStart) * z8;
   float y9 = y8;
   float z9 = -sin(imuYawStart) * x8 + cos(imuYawStart) * z8;
 
-  //旋转，相对于最后一个点
+  //绕y轴旋转（-imuYawLast）
   float x10 = cos(imuYawLast) * x9 - sin(imuYawLast) * z9;
   float y10 = y9;
   float z10 = sin(imuYawLast) * x9 + cos(imuYawLast) * z9;
 
+  //绕x轴旋转（-imuPitchLast）
   float x11 = x10;
   float y11 = cos(imuPitchLast) * y10 + sin(imuPitchLast) * z10;
   float z11 = -sin(imuPitchLast) * y10 + cos(imuPitchLast) * z10;
 
+  //绕z轴旋转（-imuRollLast）
   po->x = cos(imuRollLast) * x11 + sin(imuRollLast) * y11;
   po->y = -sin(imuRollLast) * x11 + cos(imuRollLast) * y11;
   po->z = z11;
@@ -417,12 +439,14 @@ int main(int argc, char** argv)
   laserOdometryTrans.frame_id_ = "/camera_init";
   laserOdometryTrans.child_frame_id_ = "/laser_odom";
 
-  std::vector<int> pointSearchInd;//搜索到的点序向量
-  std::vector<float> pointSearchSqDis;//搜索到的点平方距离向量
+  std::vector<int> pointSearchInd;//搜索到的点序
+  std::vector<float> pointSearchSqDis;//搜索到的点平方距离
 
   PointType pointOri, pointSel, tripod1, tripod2, tripod3, pointProj, coeff;
 
+  //退化标志
   bool isDegenerate = false;
+  //P矩阵，预测矩阵
   cv::Mat matP(6, 6, CV_32F, cv::Scalar::all(0));
 
   int frameCount = skipFrameNum;
@@ -457,11 +481,11 @@ int main(int argc, char** argv)
         surfPointsLessFlat = laserCloudSurfLast;
         laserCloudSurfLast = laserCloudTemp;
 
-        //构建kd-tree
+        //使用上一帧的特征点构建kd-tree
         kdtreeCornerLast->setInputCloud(laserCloudCornerLast);//所有的拐点集合
         kdtreeSurfLast->setInputCloud(laserCloudSurfLast);//所有的面点集合
 
-        //将cornerPointsLessSharp和surfPointLessFlat点也即拐点和面点分别发送给laserMapping
+        //将cornerPointsLessSharp和surfPointLessFlat点也即边沿点和面点分别发送给laserMapping
         sensor_msgs::PointCloud2 laserCloudCornerLast2;
         pcl::toROSMsg(*laserCloudCornerLast, laserCloudCornerLast2);
         laserCloudCornerLast2.header.stamp = ros::Time().fromSec(timeSurfPointsLessFlat);

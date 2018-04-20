@@ -62,16 +62,19 @@ tf::StampedTransform laserOdometryTrans2;
 //关联map之后的旋转平移矩阵transformMapped
 void transformAssociateToMap()
 {
+  //平移后绕y轴旋转（-transformSum[1]）
   float x1 = cos(transformSum[1]) * (transformBefMapped[3] - transformSum[3]) 
            - sin(transformSum[1]) * (transformBefMapped[5] - transformSum[5]);
   float y1 = transformBefMapped[4] - transformSum[4];
   float z1 = sin(transformSum[1]) * (transformBefMapped[3] - transformSum[3]) 
            + cos(transformSum[1]) * (transformBefMapped[5] - transformSum[5]);
 
+  //绕x轴旋转（-transformSum[0]）
   float x2 = x1;
   float y2 = cos(transformSum[0]) * y1 + sin(transformSum[0]) * z1;
   float z2 = -sin(transformSum[0]) * y1 + cos(transformSum[0]) * z1;
 
+  //绕z轴旋转（-transformSum[2]）
   transformIncre[3] = cos(transformSum[2]) * x2 + sin(transformSum[2]) * y2;
   transformIncre[4] = -sin(transformSum[2]) * x2 + cos(transformSum[2]) * y2;
   transformIncre[5] = z2;
