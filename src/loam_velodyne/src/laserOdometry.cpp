@@ -81,6 +81,7 @@ pcl::PointCloud<PointType>::Ptr surfPointsLessFlat(new pcl::PointCloud<PointType
 pcl::PointCloud<PointType>::Ptr laserCloudCornerLast(new pcl::PointCloud<PointType>());
 //less flat points of last frame
 pcl::PointCloud<PointType>::Ptr laserCloudSurfLast(new pcl::PointCloud<PointType>());
+//保存前一个节点发过来的未经处理过的特征点
 pcl::PointCloud<PointType>::Ptr laserCloudOri(new pcl::PointCloud<PointType>());
 pcl::PointCloud<PointType>::Ptr coeffSel(new pcl::PointCloud<PointType>());
 //receive all points
@@ -97,25 +98,37 @@ int laserCloudSurfLastNum;
 
 //unused
 int pointSelCornerInd[40000];
+//save 2 corner points index searched
 float pointSearchCornerInd1[40000];
 float pointSearchCornerInd2[40000];
 
 //unused
 int pointSelSurfInd[40000];
+//save 3 surf points index searched
 float pointSearchSurfInd1[40000];
 float pointSearchSurfInd2[40000];
 float pointSearchSurfInd3[40000];
 
+//当前帧相对上一帧的状态转移量，in the local frame
 float transform[6] = {0};
+//当前帧相对于第一帧的状态转移量，in the global frame
 float transformSum[6] = {0};
 
-//IMU信息:起始欧拉角，最后一个点的畸变欧拉角，位移与速度
+//点云第一个点的RPY
 float imuRollStart = 0, imuPitchStart = 0, imuYawStart = 0;
+//点云最后一个点的RPY
 float imuRollLast = 0, imuPitchLast = 0, imuYawLast = 0;
+//点云最后一个点相对于第一个点由于加减速产生的畸变位移
 float imuShiftFromStartX = 0, imuShiftFromStartY = 0, imuShiftFromStartZ = 0;
+//点云最后一个点相对于第一个点由于加减速产生的畸变速度
 float imuVeloFromStartX = 0, imuVeloFromStartY = 0, imuVeloFromStartZ = 0;
 
-//点云中的点相对开始位置去除因匀速运动产生的畸变,转换完成之后点云好像就在lidar每帧扫描起始位置位置静止不动扫描得到的
+/*****************************************************************************
+    将当前帧点云TransformToStart和将上一帧点云TransformToEnd的作用：
+         去除畸变，并将两帧点云数据统一到同一个坐标系下计算
+*****************************************************************************/
+
+//当前点云中的点相对第一个点去除因匀速运动产生的畸变，效果相当于得到在点云扫描开始位置静止扫描得到的点云
 void TransformToStart(PointType const * const pi, PointType * const po)
 {
   //插值系数计算，云中每个点的相对时间/点云周期10
@@ -146,7 +159,7 @@ void TransformToStart(PointType const * const pi, PointType * const po)
   po->intensity = pi->intensity;
 }
 
-//点云中的点相对结束位置去除因匀速运动产生的畸变,转换完成之后点云好像就在lidar每帧扫描结束位置位置静止不动扫描得到的
+//将上一帧点云中的点相对结束位置去除因匀速运动产生的畸变，效果相当于得到在点云扫描结束位置静止扫描得到的点云
 void TransformToEnd(PointType const * const pi, PointType * const po)
 {
   //插值系数计算
@@ -442,7 +455,7 @@ int main(int argc, char** argv)
   std::vector<int> pointSearchInd;//搜索到的点序
   std::vector<float> pointSearchSqDis;//搜索到的点平方距离
 
-  PointType pointOri, pointSel, tripod1, tripod2, tripod3, pointProj, coeff;
+  PointType pointOri, pointSel/*选中的特征点*/, tripod1, tripod2, tripod3/*特征点的对应点*/, pointProj/*unused*/, coeff;
 
   //退化标志
   bool isDegenerate = false;
@@ -482,10 +495,10 @@ int main(int argc, char** argv)
         laserCloudSurfLast = laserCloudTemp;
 
         //使用上一帧的特征点构建kd-tree
-        kdtreeCornerLast->setInputCloud(laserCloudCornerLast);//所有的拐点集合
-        kdtreeSurfLast->setInputCloud(laserCloudSurfLast);//所有的面点集合
+        kdtreeCornerLast->setInputCloud(laserCloudCornerLast);//所有的边沿点集合
+        kdtreeSurfLast->setInputCloud(laserCloudSurfLast);//所有的平面点集合
 
-        //将cornerPointsLessSharp和surfPointLessFlat点也即边沿点和面点分别发送给laserMapping
+        //将cornerPointsLessSharp和surfPointLessFlat点也即边沿点和平面点分别发送给laserMapping
         sensor_msgs::PointCloud2 laserCloudCornerLast2;
         pcl::toROSMsg(*laserCloudCornerLast, laserCloudCornerLast2);
         laserCloudCornerLast2.header.stamp = ros::Time().fromSec(timeSurfPointsLessFlat);
@@ -498,7 +511,7 @@ int main(int argc, char** argv)
         laserCloudSurfLast2.header.frame_id = "/camera";
         pubLaserCloudSurfLast.publish(laserCloudSurfLast2);
 
-        //记住原点的翻滚角和俯仰角，航向角反正相对的，初始值可为零
+        //记住原点的翻滚角和俯仰角
         transformSum[0] += imuPitchStart;
         transformSum[2] += imuRollStart;
 
@@ -527,7 +540,7 @@ int main(int argc, char** argv)
           for (int i = 0; i < cornerPointsSharpNum; i++) {
             TransformToStart(&cornerPointsSharp->points[i], &pointSel);
 
-            //每迭代五次更新一次，重新查找最近点
+            //每迭代五次，重新查找最近点
             if (iterCount % 5 == 0) {
               std::vector<int> indices;
               pcl::removeNaNFromPointCloud(*laserCloudCornerLast,*laserCloudCornerLast, indices);
@@ -596,7 +609,7 @@ int main(int argc, char** argv)
               tripod1 = laserCloudCornerLast->points[pointSearchCornerInd1[i]];
               tripod2 = laserCloudCornerLast->points[pointSearchCornerInd2[i]];
 
-              //偏移点记为O，kd-tree最近距离点记为A，另一个最近距离点记为B
+              //选择的特征点记为O，kd-tree最近距离点记为A，另一个最近距离点记为B
               float x0 = pointSel.x;
               float y0 = pointSel.y;
               float z0 = pointSel.z;
@@ -639,25 +652,25 @@ int main(int argc, char** argv)
               //点到线的距离，d = |向量OA 叉乘 向量OB|/|AB|
               float ld2 = a012 / l12;
 
-              //修正投影点的坐标，未使用
-              pointProj = pointSel;//指向同一个地址
+              //unused
+              pointProj = pointSel;
               pointProj.x -= la * ld2;
               pointProj.y -= lb * ld2;
               pointProj.z -= lc * ld2;
 
+              //权重计算，距离越大权重越小，距离越小权重越大，得到的权重范围<=1
               float s = 1;
-              if (iterCount >= 5) {
+              if (iterCount >= 5) {//5次迭代之后开始增加权重因素
                 s = 1 - 1.8 * fabs(ld2);
               }
 
-              //设置边沿点权重
+              //考虑权重
               coeff.x = s * la;
               coeff.y = s * lb;
               coeff.z = s * lc;
-              coeff.intensity = s * ld2;//距离乘以系数s
+              coeff.intensity = s * ld2;
 
-              if (s > 0.1 && ld2 != 0) {
-                  //保存未转换过的原始点的坐标与相应的系数,后面组成矩阵
+              if (s > 0.1 && ld2 != 0) {//只保留权重大的，也即距离比较小的点，同时也舍弃距离为零的
                 laserCloudOri->push_back(cornerPointsSharp->points[i]);
                 coeffSel->push_back(coeff);
               }
@@ -766,19 +779,20 @@ int main(int argc, char** argv)
               //点到面的距离：向量OA与与法向量的点积除以法向量的模
               float pd2 = pa * pointSel.x + pb * pointSel.y + pc * pointSel.z + pd;
 
-              //修正投影点坐标，未使用
+              //unused
               pointProj = pointSel;
               pointProj.x -= pa * pd2;
               pointProj.y -= pb * pd2;
               pointProj.z -= pc * pd2;
 
+              //同理计算权重
               float s = 1;
               if (iterCount >= 5) {
                 s = 1 - 1.8 * fabs(pd2) / sqrt(sqrt(pointSel.x * pointSel.x
                   + pointSel.y * pointSel.y + pointSel.z * pointSel.z));
               }
 
-              //设置平面点权重
+              //考虑权重
               coeff.x = s * pa;
               coeff.y = s * pb;
               coeff.z = s * pc;
@@ -855,7 +869,6 @@ int main(int argc, char** argv)
 
             float d2 = coeff.intensity;
 
-            //构建平移旋转A矩阵
             matA.at<float>(i, 0) = arx;
             matA.at<float>(i, 1) = ary;
             matA.at<float>(i, 2) = arz;
@@ -899,7 +912,7 @@ int main(int argc, char** argv)
             matP = matV.inv() * matV2;
           }
 
-          if (isDegenerate) {//如果发生退化
+          if (isDegenerate) {//如果发生退化，只使用预测矩阵P计算
             cv::Mat matX2(6, 1, CV_32F, cv::Scalar::all(0));
             matX.copyTo(matX2);
             matX = matP * matX2;
@@ -927,7 +940,7 @@ int main(int argc, char** argv)
                               pow(matX.at<float>(4, 0) * 100, 2) +
                               pow(matX.at<float>(5, 0) * 100, 2));
 
-          if (deltaR < 0.1 && deltaT < 0.1) {
+          if (deltaR < 0.1 && deltaT < 0.1) {//迭代终止条件
             break;
           }
         }
@@ -957,7 +970,7 @@ int main(int argc, char** argv)
       PluginIMURotation(rx, ry, rz, imuPitchStart, imuYawStart, imuRollStart, 
                         imuPitchLast, imuYawLast, imuRollLast, rx, ry, rz);
 
-      //结合IMU信息和lidar得到最终的旋转平移矩阵
+      //得到世界坐标系下的转移矩阵
       transformSum[0] = rx;
       transformSum[1] = ry;
       transformSum[2] = rz;
@@ -979,7 +992,7 @@ int main(int argc, char** argv)
       laserOdometry.pose.pose.position.z = tz;
       pubLaserOdometry.publish(laserOdometry);
 
-      //广播新的平移旋转之后的坐标系,rviz接收可绘图
+      //广播新的平移旋转之后的坐标系(rviz)
       laserOdometryTrans.stamp_ = ros::Time().fromSec(timeSurfPointsLessFlat);
       laserOdometryTrans.setRotation(tf::Quaternion(-geoQuat.y, -geoQuat.z, geoQuat.x, geoQuat.w));
       laserOdometryTrans.setOrigin(tf::Vector3(tx, ty, tz));
@@ -1022,7 +1035,7 @@ int main(int argc, char** argv)
         kdtreeSurfLast->setInputCloud(laserCloudSurfLast);
       }
 
-      //按照跳帧数publich边沿点，平面点以及全部点给laserMapping
+      //按照跳帧数publich边沿点，平面点以及全部点给laserMapping(每隔一帧发一次)
       if (frameCount >= skipFrameNum + 1) {
         frameCount = 0;
 

@@ -49,7 +49,9 @@
 //扫描周期
 const float scanPeriod = 0.1;
 
+//控制接收到的点云数据，每隔几帧处理一次
 const int stackFrameNum = 1;
+//控制处理得到的点云map，每隔几次publich给rviz显示
 const int mapFrameNum = 5;
 
 //时间戳
@@ -78,11 +80,15 @@ int laserCloudValidInd[125];
 //lidar周围的点云集索引
 int laserCloudSurroundInd[125];
 
+//最新接收到的边沿点
 pcl::PointCloud<PointType>::Ptr laserCloudCornerLast(new pcl::PointCloud<PointType>());
+//最新接收到的平面点
 pcl::PointCloud<PointType>::Ptr laserCloudSurfLast(new pcl::PointCloud<PointType>());
 pcl::PointCloud<PointType>::Ptr laserCloudCornerStack(new pcl::PointCloud<PointType>());
 pcl::PointCloud<PointType>::Ptr laserCloudSurfStack(new pcl::PointCloud<PointType>());
+//存放转移到世界坐标系下的边沿点
 pcl::PointCloud<PointType>::Ptr laserCloudCornerStack2(new pcl::PointCloud<PointType>());
+//存放转移到世界坐标系下的平面点
 pcl::PointCloud<PointType>::Ptr laserCloudSurfStack2(new pcl::PointCloud<PointType>());
 pcl::PointCloud<PointType>::Ptr laserCloudOri(new pcl::PointCloud<PointType>());
 pcl::PointCloud<PointType>::Ptr coeffSel(new pcl::PointCloud<PointType>());
@@ -96,13 +102,14 @@ pcl::PointCloud<PointType>::Ptr laserCloudSurfArray[laserCloudNum];
 pcl::PointCloud<PointType>::Ptr laserCloudCornerArray2[laserCloudNum];
 pcl::PointCloud<PointType>::Ptr laserCloudSurfArray2[laserCloudNum];
 
+//kd-tree
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeCornerFromMap(new pcl::KdTreeFLANN<PointType>());
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeSurfFromMap(new pcl::KdTreeFLANN<PointType>());
 
 /*************高频转换量**************/
-//odometry计算得到的的转换矩阵
+//odometry计算得到的到世界坐标系下的转移矩阵
 float transformSum[6] = {0};
-//平移增量
+//转移增量
 float transformIncre[6] = {0};
 
 /*************低频转换量*************/
@@ -238,18 +245,19 @@ void transformUpdate()
       imuPitchLast = imuPitch[imuPointerFront] * ratioFront + imuPitch[imuPointerBack] * ratioBack;
     }
 
-    //imu只用来矫正俯仰角和翻滚角
+    //imu稍微补偿俯仰角和翻滚角
     transformTobeMapped[0] = 0.998 * transformTobeMapped[0] + 0.002 * imuPitchLast;
     transformTobeMapped[2] = 0.998 * transformTobeMapped[2] + 0.002 * imuRollLast;
   }
 
+  //记录优化之前与之后的转移矩阵
   for (int i = 0; i < 6; i++) {
     transformBefMapped[i] = transformSum[i];
     transformAftMapped[i] = transformTobeMapped[i];
   }
 }
 
-//根据调整计算后转换矩阵，将点注册到起始位置为原点的世界坐标系下
+//根据调整计算后的转移矩阵，将点注册到全局世界坐标系下
 void pointAssociateToMap(PointType const * const pi, PointType * const po)
 {
   //绕z轴旋转（transformTobeMapped[2]）
@@ -264,7 +272,7 @@ void pointAssociateToMap(PointType const * const pi, PointType * const po)
   float y2 = cos(transformTobeMapped[0]) * y1 - sin(transformTobeMapped[0]) * z1;
   float z2 = sin(transformTobeMapped[0]) * y1 + cos(transformTobeMapped[0]) * z1;
 
-  //绕y轴旋转（transformTobeMapped[2]），再平移
+  //绕y轴旋转（transformTobeMapped[1]），再平移
   po->x = cos(transformTobeMapped[1]) * x2 + sin(transformTobeMapped[1]) * z2
         + transformTobeMapped[3];
   po->y = y2 + transformTobeMapped[4];
@@ -297,7 +305,7 @@ void pointAssociateTobeMapped(PointType const * const pi, PointType * const po)
   po->intensity = pi->intensity;
 }
 
-//接收点云拐点
+//接收边沿点
 void laserCloudCornerLastHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudCornerLast2)
 {
   timeLaserCloudCornerLast = laserCloudCornerLast2->header.stamp.toSec();
@@ -308,7 +316,7 @@ void laserCloudCornerLastHandler(const sensor_msgs::PointCloud2ConstPtr& laserCl
   newLaserCloudCornerLast = true;
 }
 
-//接收点云平面点
+//接收平面点
 void laserCloudSurfLastHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudSurfLast2)
 {
   timeLaserCloudSurfLast = laserCloudSurfLast2->header.stamp.toSec();
@@ -454,10 +462,10 @@ int main(int argc, char** argv)
 
       frameCount++;
       if (frameCount >= stackFrameNum) {
-          //获取世界坐标系转换矩阵
+        //获取世界坐标系转换矩阵
         transformAssociateToMap();
 
-        //将面点和拐点进行旋转平移转换到世界坐标系下
+        //将最新接收到的平面点和边沿点进行旋转平移转换到世界坐标系下
         int laserCloudCornerLastNum = laserCloudCornerLast->points.size();
         for (int i = 0; i < laserCloudCornerLastNum; i++) {
           pointAssociateToMap(&laserCloudCornerLast->points[i], &pointSel);
@@ -1004,6 +1012,7 @@ int main(int argc, char** argv)
               matX = matP * matX2;
             }
 
+            //积累每次的调整量
             transformTobeMapped[0] += matX.at<float>(0, 0);
             transformTobeMapped[1] += matX.at<float>(1, 0);
             transformTobeMapped[2] += matX.at<float>(2, 0);
