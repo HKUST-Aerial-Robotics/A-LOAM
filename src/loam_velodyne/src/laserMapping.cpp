@@ -72,7 +72,7 @@ int laserCloudCenDepth = 10;
 const int laserCloudWidth = 21;
 const int laserCloudHeight = 11;
 const int laserCloudDepth = 21;
-//点云方块集合数量
+//点云方块集合最大数量
 const int laserCloudNum = laserCloudWidth * laserCloudHeight * laserCloudDepth;//4851
 
 //lidar视域范围内(FOV)的点云集索引
@@ -105,7 +105,7 @@ pcl::PointCloud<PointType>::Ptr laserCloudCornerFromMap(new pcl::PointCloud<Poin
 pcl::PointCloud<PointType>::Ptr laserCloudSurfFromMap(new pcl::PointCloud<PointType>());
 //点云全部点
 pcl::PointCloud<PointType>::Ptr laserCloudFullRes(new pcl::PointCloud<PointType>());
-//array都是以50米为单位的立方体
+//array都是以50米为单位的立方体地图，运行过程中会一直保存
 //存放边沿点的cube
 pcl::PointCloud<PointType>::Ptr laserCloudCornerArray[laserCloudNum];
 //存放平面点的cube
@@ -372,7 +372,7 @@ void laserOdometryHandler(const nav_msgs::Odometry::ConstPtr& laserOdometry)
   newLaserOdometry = true;
 }
 
-//接收IMU信息，只使用翻滚角和俯仰角，航向角完全信任lidar
+//接收IMU信息，只使用了翻滚角和俯仰角
 void imuHandler(const sensor_msgs::Imu::ConstPtr& imuIn)
 {
   double roll, pitch, yaw;
@@ -499,11 +499,12 @@ int main(int argc, char** argv)
         pointOnYAxis.x = 0.0;
         pointOnYAxis.y = 10.0;
         pointOnYAxis.z = 0.0;
-        //获取世界坐标系下y方向上10米高位置的点的坐标
+        //获取y方向上10米高位置的点在世界坐标系下的坐标
         pointAssociateToMap(&pointOnYAxis, &pointOnYAxis);
 
         //立方体中点在世界坐标系下的（原点）位置
-        //过半取一（以50米进行四舍五入的效果）
+        //过半取一（以50米进行四舍五入的效果），由于数组下标只能为正数，而地图可能建立在原点前后，因此
+        //每一维偏移一个laserCloudCenWidth（该值会动态调整，以使得数组利用最大化初始值为该维数组长度1/2）的量
         int centerCubeI = int((transformTobeMapped[3] + 25.0) / 50.0) + laserCloudCenWidth;
         int centerCubeJ = int((transformTobeMapped[4] + 25.0) / 50.0) + laserCloudCenHeight;
         int centerCubeK = int((transformTobeMapped[5] + 25.0) / 50.0) + laserCloudCenDepth;
@@ -514,6 +515,7 @@ int main(int argc, char** argv)
         if (transformTobeMapped[5] + 25.0 < 0) centerCubeK--;
 
         //调整之后取值范围:3 < centerCubeI < 18， 3 < centerCubeJ < 8, 3 < centerCubeK < 18
+        //如果处于下边界，表明地图向负方向延伸的可能性比较大，则循环移位，将数组中心点向上边界调整一个单位
         while (centerCubeI < 3) {
           for (int j = 0; j < laserCloudHeight; j++) {
             for (int k = 0; k < laserCloudDepth; k++) {//实现一次循环移位效果
@@ -544,6 +546,7 @@ int main(int argc, char** argv)
           laserCloudCenWidth++;
         }
 
+        //如果处于上边界，表明地图向正方向延伸的可能性比较大，则循环移位，将数组中心点向下边界调整一个单位
         while (centerCubeI >= laserCloudWidth - 3) {//18
           for (int j = 0; j < laserCloudHeight; j++) {
             for (int k = 0; k < laserCloudDepth; k++) {
@@ -686,7 +689,8 @@ int main(int argc, char** argv)
 
         int laserCloudValidNum = 0;
         int laserCloudSurroundNum = 0;
-        //在每一维附近5个cube里进行处理（前后250米范围内，总共500米范围）
+        //在每一维附近5个cube(前2个，后2个，中间1个)里进行查找（前后250米范围内，总共500米范围），三个维度总共125个cube
+        //在这125个cube里面进一步筛选在视域范围内的cube
         for (int i = centerCubeI - 2; i <= centerCubeI + 2; i++) {
           for (int j = centerCubeJ - 2; j <= centerCubeJ + 2; j++) {
             for (int k = centerCubeK - 2; k <= centerCubeK + 2; k++) {
@@ -694,7 +698,7 @@ int main(int argc, char** argv)
                   j >= 0 && j < laserCloudHeight && 
                   k >= 0 && k < laserCloudDepth) {//如果索引合法
 
-                //换算成实际比例
+                //换算成实际比例，在世界坐标系下的坐标
                 float centerX = 50.0 * (i - laserCloudCenWidth);
                 float centerY = 50.0 * (j - laserCloudCenHeight);
                 float centerZ = 50.0 * (k - laserCloudCenDepth);
@@ -703,10 +707,12 @@ int main(int argc, char** argv)
                 for (int ii = -1; ii <= 1; ii += 2) {
                   for (int jj = -1; jj <= 1; jj += 2) {
                     for (int kk = -1; kk <= 1; kk += 2) {
+                      //上下左右八个顶点坐标
                       float cornerX = centerX + 25.0 * ii;
                       float cornerY = centerY + 25.0 * jj;
                       float cornerZ = centerZ + 25.0 * kk;
 
+                      //原点到顶点距离的平方和
                       float squaredSide1 = (transformTobeMapped[3] - cornerX) 
                                          * (transformTobeMapped[3] - cornerX) 
                                          + (transformTobeMapped[4] - cornerY) 
@@ -714,6 +720,7 @@ int main(int argc, char** argv)
                                          + (transformTobeMapped[5] - cornerZ) 
                                          * (transformTobeMapped[5] - cornerZ);
 
+                      //pointOnYAxis到顶点距离的平方和
                       float squaredSide2 = (pointOnYAxis.x - cornerX) * (pointOnYAxis.x - cornerX) 
                                          + (pointOnYAxis.y - cornerY) * (pointOnYAxis.y - cornerY)
                                          + (pointOnYAxis.z - cornerZ) * (pointOnYAxis.z - cornerZ);
@@ -731,13 +738,13 @@ int main(int argc, char** argv)
                   }
                 }
 
-                //在视域范围内则记住索引
+                //在视域范围内则记住cube索引，匹配用
                 if (isInLaserFOV) {
                   laserCloudValidInd[laserCloudValidNum] = i + laserCloudWidth * j 
                                                        + laserCloudWidth * laserCloudHeight * k;
                   laserCloudValidNum++;
                 }
-                //附近的点云索引也记住，显示用
+                //附近的点云则记住所有的索引，显示用
                 laserCloudSurroundInd[laserCloudSurroundNum] = i + laserCloudWidth * j 
                                                              + laserCloudWidth * laserCloudHeight * k;
                 laserCloudSurroundNum++;
@@ -1067,7 +1074,7 @@ int main(int argc, char** argv)
             }
           }
 
-          //更新相关的转移矩阵
+          //迭代结束更新相关的转移矩阵
           transformUpdate();
         }
 
@@ -1076,7 +1083,7 @@ int main(int argc, char** argv)
           //转移到世界坐标系
           pointAssociateToMap(&laserCloudCornerStack->points[i], &pointSel);
 
-          //按50的比例尺缩小，四舍五入，计算索引
+          //按50的比例尺缩小，四舍五入，偏移laserCloudCen*的量，计算索引
           int cubeI = int((pointSel.x + 25.0) / 50.0) + laserCloudCenWidth;
           int cubeJ = int((pointSel.y + 25.0) / 50.0) + laserCloudCenHeight;
           int cubeK = int((pointSel.z + 25.0) / 50.0) + laserCloudCenDepth;
