@@ -50,8 +50,11 @@
 float transformSum[6] = {0};
 //平移增量
 float transformIncre[6] = {0};
+//经过mapping矫正过后的最终的世界坐标系下的位姿
 float transformMapped[6] = {0};
+//mapping传递过来的优化前的位姿
 float transformBefMapped[6] = {0};
+//mapping传递过来的优化后的位姿
 float transformAftMapped[6] = {0};
 
 ros::Publisher *pubLaserOdometry2Pointer = NULL;
@@ -59,7 +62,7 @@ tf::TransformBroadcaster *tfBroadcaster2Pointer = NULL;
 nav_msgs::Odometry laserOdometry2;
 tf::StampedTransform laserOdometryTrans2;
 
-//关联map之后的旋转平移矩阵transformMapped
+//odometry的运动估计和mapping矫正量融合之后得到的最终的位姿transformMapped
 void transformAssociateToMap()
 {
   //平移后绕y轴旋转（-transformSum[1]）

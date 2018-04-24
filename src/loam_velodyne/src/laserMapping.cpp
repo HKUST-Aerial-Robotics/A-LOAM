@@ -105,7 +105,7 @@ pcl::PointCloud<PointType>::Ptr laserCloudCornerFromMap(new pcl::PointCloud<Poin
 pcl::PointCloud<PointType>::Ptr laserCloudSurfFromMap(new pcl::PointCloud<PointType>());
 //点云全部点
 pcl::PointCloud<PointType>::Ptr laserCloudFullRes(new pcl::PointCloud<PointType>());
-//array都是以50米为单位的立方体地图，运行过程中会一直保存
+//array都是以50米为单位的立方体地图，运行过程中会一直保存(有需要的话可考虑优化，只保存近邻的，或者直接数组开小一点)
 //存放边沿点的cube
 pcl::PointCloud<PointType>::Ptr laserCloudCornerArray[laserCloudNum];
 //存放平面点的cube
@@ -474,11 +474,12 @@ int main(int argc, char** argv)
       newLaserOdometry = false;
 
       frameCount++;
+      //控制跳帧数，>=这里实际并没有跳帧，只取>或者增大stackFrameNum才能实现相应的跳帧处理
       if (frameCount >= stackFrameNum) {
         //获取世界坐标系转换矩阵
         transformAssociateToMap();
 
-        //将最新接收到的平面点和边沿点进行旋转平移转换到世界坐标系下
+        //将最新接收到的平面点和边沿点进行旋转平移转换到世界坐标系下(这里和后面的逆转换应无必要)
         int laserCloudCornerLastNum = laserCloudCornerLast->points.size();
         for (int i = 0; i < laserCloudCornerLastNum; i++) {
           pointAssociateToMap(&laserCloudCornerLast->points[i], &pointSel);
@@ -504,7 +505,7 @@ int main(int argc, char** argv)
 
         //立方体中点在世界坐标系下的（原点）位置
         //过半取一（以50米进行四舍五入的效果），由于数组下标只能为正数，而地图可能建立在原点前后，因此
-        //每一维偏移一个laserCloudCenWidth（该值会动态调整，以使得数组利用最大化初始值为该维数组长度1/2）的量
+        //每一维偏移一个laserCloudCenWidth（该值会动态调整，以使得数组利用最大化，初始值为该维数组长度1/2）的量
         int centerCubeI = int((transformTobeMapped[3] + 25.0) / 50.0) + laserCloudCenWidth;
         int centerCubeJ = int((transformTobeMapped[4] + 25.0) / 50.0) + laserCloudCenHeight;
         int centerCubeK = int((transformTobeMapped[5] + 25.0) / 50.0) + laserCloudCenDepth;
@@ -525,7 +526,7 @@ int main(int argc, char** argv)
               laserCloudCornerArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k];//that's [i + 21 * j + 231 * k]
               pcl::PointCloud<PointType>::Ptr laserCloudCubeSurfPointer =
               laserCloudSurfArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k];
-              //循环移位，最后高维度上依次后移
+              //循环移位，I维度上依次后移
               for (; i >= 1; i--) {
                 laserCloudCornerArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k] =
                 laserCloudCornerArray[i - 1 + laserCloudWidth*j + laserCloudWidth * laserCloudHeight * k];
@@ -555,7 +556,7 @@ int main(int argc, char** argv)
               laserCloudCornerArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k];
               pcl::PointCloud<PointType>::Ptr laserCloudCubeSurfPointer =
               laserCloudSurfArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k];
-              //最高维度上依次前移
+              //I维度上依次前移
               for (; i < laserCloudWidth - 1; i++) {
                 laserCloudCornerArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k] =
                 laserCloudCornerArray[i + 1 + laserCloudWidth*j + laserCloudWidth * laserCloudHeight * k];
@@ -583,7 +584,7 @@ int main(int argc, char** argv)
               laserCloudCornerArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k];
               pcl::PointCloud<PointType>::Ptr laserCloudCubeSurfPointer =
               laserCloudSurfArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k];
-              //次高维度上，依次后移
+              //J维度上，依次后移
               for (; j >= 1; j--) {
                 laserCloudCornerArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k] =
                 laserCloudCornerArray[i + laserCloudWidth*(j - 1) + laserCloudWidth * laserCloudHeight*k];
@@ -611,7 +612,7 @@ int main(int argc, char** argv)
               laserCloudCornerArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k];
               pcl::PointCloud<PointType>::Ptr laserCloudCubeSurfPointer =
               laserCloudSurfArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k];
-              //次高维度上一次前移
+              //J维度上一次前移
               for (; j < laserCloudHeight - 1; j++) {
                 laserCloudCornerArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k] =
                 laserCloudCornerArray[i + laserCloudWidth*(j + 1) + laserCloudWidth * laserCloudHeight*k];
@@ -639,7 +640,7 @@ int main(int argc, char** argv)
               laserCloudCornerArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k];
               pcl::PointCloud<PointType>::Ptr laserCloudCubeSurfPointer =
               laserCloudSurfArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k];
-              //最低维度上依次后移
+              //K维度上依次后移
               for (; k >= 1; k--) {
                 laserCloudCornerArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k] =
                 laserCloudCornerArray[i + laserCloudWidth*j + laserCloudWidth * laserCloudHeight*(k - 1)];
@@ -667,7 +668,7 @@ int main(int argc, char** argv)
               laserCloudCornerArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k];
               pcl::PointCloud<PointType>::Ptr laserCloudCubeSurfPointer =
               laserCloudSurfArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k];
-              //最低维度上依次前移
+              //K维度上依次前移
               for (; k < laserCloudDepth - 1; k++) {
                 laserCloudCornerArray[i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k] =
                 laserCloudCornerArray[i + laserCloudWidth*j + laserCloudWidth * laserCloudHeight*(k + 1)];
@@ -738,13 +739,13 @@ int main(int argc, char** argv)
                   }
                 }
 
-                //在视域范围内则记住cube索引，匹配用
+                //记住视域范围内的cube索引，匹配用
                 if (isInLaserFOV) {
                   laserCloudValidInd[laserCloudValidNum] = i + laserCloudWidth * j 
                                                        + laserCloudWidth * laserCloudHeight * k;
                   laserCloudValidNum++;
                 }
-                //附近的点云则记住所有的索引，显示用
+                //记住附近所有cube的索引，显示用
                 laserCloudSurroundInd[laserCloudSurroundNum] = i + laserCloudWidth * j 
                                                              + laserCloudWidth * laserCloudHeight * k;
                 laserCloudSurroundNum++;
@@ -763,10 +764,11 @@ int main(int argc, char** argv)
         int laserCloudCornerFromMapNum = laserCloudCornerFromMap->points.size();
         int laserCloudSurfFromMapNum = laserCloudSurfFromMap->points.size();
 
-        /********************************************************************
-          此处将特征点转移回local坐标系，是为了voxel grid filter的下采样操作
-          不越界，后面还会转移回世界坐标系，如果没有越界问题可以考虑优化
-        ********************************************************************/
+        /***********************************************************************
+          此处将特征点转移回local坐标系，是为了voxel grid filter的下采样操作不越
+          界？好像不是！后面还会转移回世界坐标系，这里是前面的逆转换，和前面一样
+          应无必要，可直接对laserCloudCornerLast和laserCloudSurfLast进行下采样
+        ***********************************************************************/
         int laserCloudCornerStackNum2 = laserCloudCornerStack2->points.size();
         for (int i = 0; i < laserCloudCornerStackNum2; i++) {
           pointAssociateTobeMapped(&laserCloudCornerStack2->points[i], &laserCloudCornerStack2->points[i]);
