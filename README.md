@@ -1,2 +1,2 @@
 # LOAM_NOTED
-Here you can see the loam codes noted in Chinese!
+Here you can see the loam code noted in Chinese!
