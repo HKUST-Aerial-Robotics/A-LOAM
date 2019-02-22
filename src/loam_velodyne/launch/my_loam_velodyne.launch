@@ -1,0 +1,10 @@
+<launch>
+
+
+
+  <node pkg="loam_velodyne" type="scanRegistration" name="scanRegistration" output="screen"/>
+
+  <node pkg="loam_velodyne" type="my_laserOdometry" name="my_laserOdometry" output="screen" respawn="true">
+  </node>
+
+</launch>

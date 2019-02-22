@@ -34,6 +34,7 @@
 
 #include <loam_velodyne/common.h>
 #include <nav_msgs/Odometry.h>
+#include <nav_msgs/Path.h>
 #include <opencv/cv.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -452,6 +453,10 @@ int main(int argc, char** argv)
   laserOdometryTrans.frame_id_ = "/camera_init";
   laserOdometryTrans.child_frame_id_ = "/laser_odom";
 
+  ros::Publisher pubLaserPath = nh.advertise<nav_msgs::Path>("/laser_path", 5);
+  nav_msgs::Path laserPath;
+  laserPath.header.frame_id = "/camera_init";
+
   std::vector<int> pointSearchInd;//搜索到的点序
   std::vector<float> pointSearchSqDis;//搜索到的点平方距离
 
@@ -469,12 +474,14 @@ int main(int argc, char** argv)
     ros::spinOnce();
 
     if (newCornerPointsSharp && newCornerPointsLessSharp && newSurfPointsFlat && 
-        newSurfPointsLessFlat && newLaserCloudFullRes && newImuTrans &&
+        newSurfPointsLessFlat && newLaserCloudFullRes && 
+        //newImuTrans &&
         fabs(timeCornerPointsSharp - timeSurfPointsLessFlat) < 0.005 &&
         fabs(timeCornerPointsLessSharp - timeSurfPointsLessFlat) < 0.005 &&
         fabs(timeSurfPointsFlat - timeSurfPointsLessFlat) < 0.005 &&
-        fabs(timeLaserCloudFullRes - timeSurfPointsLessFlat) < 0.005 &&
-        fabs(timeImuTrans - timeSurfPointsLessFlat) < 0.005) {  //同步作用，确保同时收到同一个点云的特征点以及IMU信息才进入
+        fabs(timeLaserCloudFullRes - timeSurfPointsLessFlat) < 0.005 
+        //&& fabs(timeImuTrans - timeSurfPointsLessFlat) < 0.005
+        ) {  //同步作用，确保同时收到同一个点云的特征点以及IMU信息才进入
       newCornerPointsSharp = false;
       newCornerPointsLessSharp = false;
       newSurfPointsFlat = false;
@@ -526,7 +533,7 @@ int main(int argc, char** argv)
 
       if (laserCloudCornerLastNum > 10 && laserCloudSurfLastNum > 100) {
         std::vector<int> indices;
-        pcl::removeNaNFromPointCloud(*cornerPointsSharp,*cornerPointsSharp, indices);
+        //pcl::removeNaNFromPointCloud(*cornerPointsSharp,*cornerPointsSharp, indices);
         int cornerPointsSharpNum = cornerPointsSharp->points.size();
         int surfPointsFlatNum = surfPointsFlat->points.size();
         
@@ -543,7 +550,7 @@ int main(int argc, char** argv)
             //每迭代五次，重新查找最近点
             if (iterCount % 5 == 0) {
               std::vector<int> indices;
-              pcl::removeNaNFromPointCloud(*laserCloudCornerLast,*laserCloudCornerLast, indices);
+              //pcl::removeNaNFromPointCloud(*laserCloudCornerLast,*laserCloudCornerLast, indices);
               //kd-tree查找一个最近距离点，边沿点未经过体素栅格滤波，一般边沿点本来就比较少，不做滤波
               kdtreeCornerLast->nearestKSearch(pointSel, 1, pointSearchInd, pointSearchSqDis);
               int closestPointInd = -1, minPointInd2 = -1;
@@ -557,7 +564,7 @@ int main(int argc, char** argv)
 
                 float pointSqDis, minPointSqDis2 = 25;//初始门槛值5米，可大致过滤掉scanID相邻，但实际线不相邻的值
                 //寻找距离目标点最近距离的平方和最小的点
-                for (int j = closestPointInd + 1; j < cornerPointsSharpNum; j++) {//向scanID增大的方向查找
+                for (int j = closestPointInd + 1; j < laserCloudCornerLastNum; j++) {//向scanID增大的方向查找
                   if (int(laserCloudCornerLast->points[j].intensity) > closestPointScan + 2.5) {//非相邻线
                     break;
                   }
@@ -660,9 +667,11 @@ int main(int argc, char** argv)
 
               //权重计算，距离越大权重越小，距离越小权重越大，得到的权重范围<=1
               float s = 1;
+              
               if (iterCount >= 5) {//5次迭代之后开始增加权重因素
                 s = 1 - 1.8 * fabs(ld2);
               }
+              
 
               //考虑权重
               coeff.x = s * la;
@@ -670,7 +679,8 @@ int main(int argc, char** argv)
               coeff.z = s * lc;
               coeff.intensity = s * ld2;
 
-              if (s > 0.1 && ld2 != 0) {//只保留权重大的，也即距离比较小的点，同时也舍弃距离为零的
+              if (s > 0.1 && ld2 != 0) 
+              {//只保留权重大的，也即距离比较小的点，同时也舍弃距离为零的
                 laserCloudOri->push_back(cornerPointsSharp->points[i]);
                 coeffSel->push_back(coeff);
               }
@@ -787,10 +797,12 @@ int main(int argc, char** argv)
 
               //同理计算权重
               float s = 1;
+              
               if (iterCount >= 5) {
                 s = 1 - 1.8 * fabs(pd2) / sqrt(sqrt(pointSel.x * pointSel.x
                   + pointSel.y * pointSel.y + pointSel.z * pointSel.z));
               }
+              
 
               //考虑权重
               coeff.x = s * pa;
@@ -798,7 +810,8 @@ int main(int argc, char** argv)
               coeff.z = s * pc;
               coeff.intensity = s * pd2;
 
-              if (s > 0.1 && pd2 != 0) {
+              if (s > 0.1 && pd2 != 0) 
+              {
                   //保存原始点与相应的系数
                 laserCloudOri->push_back(surfPointsFlat->points[i]);
                 coeffSel->push_back(coeff);
@@ -825,6 +838,7 @@ int main(int argc, char** argv)
             coeff = coeffSel->points[i];
 
             float s = 1;
+            //float s = 10 * (laserCloudOri->points[i].intensity - int(laserCloudOri->points[i].intensity));
 
             float srx = sin(s * transform[0]);
             float crx = cos(s * transform[0]);
@@ -896,7 +910,8 @@ int main(int argc, char** argv)
 
             isDegenerate = false;
             //特征值取值门槛
-            float eignThre[6] = {10, 10, 10, 10, 10, 10};
+            //float eignThre[6] = {10, 10, 10, 10, 10, 10};
+            float eignThre[6] = {1, 1, 1, 1, 1, 1};
             for (int i = 5; i >= 0; i--) {//从小到大查找
               if (matE.at<float>(0, i) < eignThre[i]) {//特征值太小，则认为处在兼并环境中，发生了退化
                 for (int j = 0; j < 6; j++) {//对应的特征向量置为0
@@ -927,7 +942,7 @@ int main(int argc, char** argv)
           transform[5] += matX.at<float>(5, 0);
 
           for(int i=0; i<6; i++){
-            if(isnan(transform[i]))//判断是否非数字
+            if(std::isnan(transform[i]))//判断是否非数字
               transform[i]=0;
           }
           //计算旋转平移量，如果很小就停止迭代
@@ -949,7 +964,8 @@ int main(int argc, char** argv)
       float rx, ry, rz, tx, ty, tz;
       //求相对于原点的旋转量,垂直方向上1.05倍修正?
       AccumulateRotation(transformSum[0], transformSum[1], transformSum[2], 
-                         -transform[0], -transform[1] * 1.05, -transform[2], rx, ry, rz);
+      //                   -transform[0], -transform[1] * 1.05, -transform[2], rx, ry, rz);
+                         -transform[0], -transform[1], -transform[2], rx, ry, rz);
 
       float x1 = cos(rz) * (transform[3] - imuShiftFromStartX) 
                - sin(rz) * (transform[4] - imuShiftFromStartY);
@@ -991,6 +1007,13 @@ int main(int argc, char** argv)
       laserOdometry.pose.pose.position.y = ty;
       laserOdometry.pose.pose.position.z = tz;
       pubLaserOdometry.publish(laserOdometry);
+
+      geometry_msgs::PoseStamped laserPose;
+      laserPose.header = laserOdometry.header;
+      laserPose.pose = laserOdometry.pose.pose;
+      laserPath.header.stamp = laserOdometry.header.stamp;
+      laserPath.poses.push_back(laserPose);
+      pubLaserPath.publish(laserPath);
 
       //广播新的平移旋转之后的坐标系(rviz)
       laserOdometryTrans.stamp_ = ros::Time().fromSec(timeSurfPointsLessFlat);
