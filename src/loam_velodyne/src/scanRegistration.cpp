@@ -274,6 +274,40 @@ void AccumulateIMUShift()
   }
 }
 
+// Tong add
+template <typename PointT> void
+removeZeroFromPointCloud (const pcl::PointCloud<PointT> &cloud_in, 
+                              pcl::PointCloud<PointT> &cloud_out)
+{
+  // If the clouds are not the same, prepare the output
+    if (&cloud_in != &cloud_out)
+    {
+      cloud_out.header = cloud_in.header;
+      cloud_out.points.resize (cloud_in.points.size ());
+    }
+
+    size_t j = 0;
+
+    for (size_t i = 0; i < cloud_in.points.size (); ++i)
+    {
+      if (cloud_in.points[i].x == 0 && cloud_in.points[i].y == 0 && cloud_in.points[i].z == 0)
+        continue;
+      cloud_out.points[j] = cloud_in.points[i];
+      j++;
+    }
+    if (j != cloud_in.points.size ())
+    {
+      // Resize to the correct size
+      cloud_out.points.resize (j);
+    }
+
+    cloud_out.height = 1;
+    cloud_out.width  = static_cast<uint32_t>(j);
+
+    // Removing bad points => dense (note: 'dense' doesn't mean 'organized')
+    cloud_out.is_dense = true;
+} 
+
 //接收点云数据，velodyne雷达坐标系安装为x轴向前，y轴向左，z轴向上的右手坐标系
 void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
 {
@@ -297,10 +331,15 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
   std::vector<int> indices;
   //移除空点
   pcl::removeNaNFromPointCloud(laserCloudIn, laserCloudIn, indices);
+
+  // Tong add
+  removeZeroFromPointCloud(laserCloudIn, laserCloudIn);
+
   //点云点的数量
   int cloudSize = laserCloudIn.points.size();
   //lidar scan开始点的旋转角,atan2范围[-pi,+pi],计算旋转角时取负号是因为velodyne是顺时针旋转
   float startOri = -atan2(laserCloudIn.points[0].y, laserCloudIn.points[0].x);
+  printf("state Ori %f\n", startOri);
   //lidar scan结束点的旋转角，加2*pi使点云旋转周期为2*pi
   float endOri = -atan2(laserCloudIn.points[cloudSize - 1].y,
                         laserCloudIn.points[cloudSize - 1].x) + 2 * M_PI;
@@ -312,6 +351,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
   } else if (endOri - startOri < M_PI) {
     endOri += 2 * M_PI;
   }
+  printf("end Ori %f\n", endOri);
   //lidar扫描线是否旋转过半
   bool halfPassed = false;
   int count = cloudSize;
@@ -319,12 +359,12 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
   std::vector<pcl::PointCloud<PointType> > laserCloudScans(N_SCANS);
   for (int i = 0; i < cloudSize; i++) {
     //坐标轴交换，velodyne lidar的坐标系也转换到z轴向前，x轴向左的右手坐标系
-    point.x = laserCloudIn.points[i].y;
-    point.y = laserCloudIn.points[i].z;
-    point.z = laserCloudIn.points[i].x;
+    point.x = laserCloudIn.points[i].x;
+    point.y = laserCloudIn.points[i].y;
+    point.z = laserCloudIn.points[i].z;
 
     //计算点的仰角(根据lidar文档垂直角计算公式),根据仰角排列激光线号，velodyne每两个scan之间间隔2度
-    float angle = atan(point.y / sqrt(point.x * point.x + point.z * point.z)) * 180 / M_PI;
+    float angle = atan(point.z / sqrt(point.x * point.x + point.y * point.y)) * 180 / M_PI;
     int scanID;
     //仰角四舍五入(加减0.5截断效果等于四舍五入)
     int roundedAngle = int(angle + (angle<0.0?-0.5:+0.5)); 
@@ -341,7 +381,8 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
     }
 
     //该点的旋转角
-    float ori = -atan2(point.x, point.z);
+    float ori = -atan2(point.y, point.x);
+    //printf("start %lf raw ori %f ", startOri, ori);
     if (!halfPassed) {//根据扫描线是否旋转过半选择与起始位置还是终止位置进行差值计算，从而进行补偿
         //确保-pi/2 < ori - startOri < 3*pi/2
       if (ori < startOri - M_PI / 2) {
@@ -366,6 +407,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
 
     //-0.5 < relTime < 1.5（点旋转的角度与整个周期旋转角度的比率, 即点云中点的相对时间）
     float relTime = (ori - startOri) / (endOri - startOri);
+    //printf("rect ori %f end ori %f s %f \n", ori, endOri, relTime);
     //点强度=线号+点相对时间（即一个整数+一个小数，整数部分是线号，小数部分是该点的相对时间）,匀速扫描：根据当前扫描的角度和扫描周期计算相对扫描起始位置的时间
     point.intensity = scanID + scanPeriod * relTime;
 
@@ -806,7 +848,7 @@ int main(int argc, char** argv)
   ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2> 
                                   ("/velodyne_points", 2, laserCloudHandler);
 
-  ros::Subscriber subImu = nh.subscribe<sensor_msgs::Imu> ("/imu/data", 50, imuHandler);
+  //ros::Subscriber subImu = nh.subscribe<sensor_msgs::Imu> ("/imu/data", 50, imuHandler);
 
   pubLaserCloud = nh.advertise<sensor_msgs::PointCloud2>
                                  ("/velodyne_cloud_2", 2);
