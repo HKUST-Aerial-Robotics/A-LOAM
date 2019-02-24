@@ -30,6 +30,8 @@
 //   J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time.
 //     Robotics: Science and Systems Conference (RSS). Berkeley, CA, July 2014.
 
+#pragma once
+
 #include <cmath>
 
 #include <pcl/point_types.h>

@@ -1,10 +1,3 @@
-#define BACKWARD_HAS_DW 1
-#include <backward.hpp>
-namespace backward
-{
-backward::SignalHandling sh;
-} // namespace backward
-
 // Copyright 2013, Ji Zhang, Carnegie Mellon University
 // Further contributions copyright (c) 2016, Southwest Research Institute
 // All rights reserved.
@@ -42,6 +35,7 @@ backward::SignalHandling sh;
 #include <loam_velodyne/common.h>
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
+#include <geometry_msgs/PoseStamped.h>
 #include <opencv/cv.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
@@ -141,17 +135,10 @@ float transformBefMapped[6] = {0};
 //存放mapping之后的经过mapping微调之后的转换矩阵
 float transformAftMapped[6] = {0};
 
-int imuPointerFront = 0;
-int imuPointerLast = -1;
-const int imuQueLength = 200;
-
-double imuTime[imuQueLength] = {0};
-float imuRoll[imuQueLength] = {0};
-float imuPitch[imuQueLength] = {0};
-
 //基于匀速模型，根据上次微调的结果和odometry这次与上次计算的结果，猜测一个新的世界坐标系的转换矩阵transformTobeMapped
 void transformAssociateToMap()
 {
+  // transformIncre: t_curr_last = R_w_last * (t_w_last - t_w_curr)
   float x1 = cos(transformSum[1]) * (transformBefMapped[3] - transformSum[3]) 
            - sin(transformSum[1]) * (transformBefMapped[5] - transformSum[5]);
   float y1 = transformBefMapped[4] - transformSum[4];
@@ -167,6 +154,14 @@ void transformAssociateToMap()
   transformIncre[4] = -sin(transformSum[2]) * x2 + cos(transformSum[2]) * y2;
   transformIncre[5] = z2;
 
+  /*                                                          ________            ________
+   * transformTobeMapped: R_w_curr   =   R_w_last     *       R_last_w      *     R_w_curr
+   *                          ^             ^                     ^                   ^
+   *                          |             |                     |                   |
+   *          transformTobeMapped     transformAftMapped    transformBefMapped'    transformSum
+   *
+   * ALL IN YXZ Euler Angle. e.g. R = R_y(theta_2) * R_x(theta_1) * R_z(theta_3)
+   */
   float sbcx = sin(transformSum[0]);
   float cbcx = cos(transformSum[0]);
   float sbcy = sin(transformSum[1]);
@@ -189,10 +184,8 @@ void transformAssociateToMap()
   float calz = cos(transformAftMapped[2]);
 
   float srx = -sbcx*(salx*sblx + calx*cblx*salz*sblz + calx*calz*cblx*cblz)
-            - cbcx*sbcy*(calx*calz*(cbly*sblz - cblz*sblx*sbly)
-            - calx*salz*(cbly*cblz + sblx*sbly*sblz) + cblx*salx*sbly)
-            - cbcx*cbcy*(calx*salz*(cblz*sbly - cbly*sblx*sblz) 
-            - calx*calz*(sbly*sblz + cbly*cblz*sblx) + cblx*cbly*salx);
+            - cbcx*sbcy*(calx*calz*(cbly*sblz - cblz*sblx*sbly) - calx*salz*(cbly*cblz + sblx*sbly*sblz) + cblx*salx*sbly)
+            - cbcx*cbcy*(calx*salz*(cblz*sbly - cbly*sblx*sblz) - calx*calz*(sbly*sblz + cbly*cblz*sblx) + cblx*cbly*salx);
   transformTobeMapped[0] = -asin(srx);
 
   float srycrx = sbcx*(cblx*cblz*(caly*salz - calz*salx*saly)
@@ -223,6 +216,7 @@ void transformAssociateToMap()
   transformTobeMapped[2] = atan2(srzcrx / cos(transformTobeMapped[0]), 
                                  crzcrx / cos(transformTobeMapped[0]));
 
+  // t_w_curr = t_w_last - R_w_curr * t_curr_last
   x1 = cos(transformTobeMapped[2]) * transformIncre[3] - sin(transformTobeMapped[2]) * transformIncre[4];
   y1 = sin(transformTobeMapped[2]) * transformIncre[3] + cos(transformTobeMapped[2]) * transformIncre[4];
   z1 = transformIncre[5];
@@ -241,36 +235,6 @@ void transformAssociateToMap()
 //记录odometry发送的转换矩阵与mapping之后的转换矩阵，下一帧点云会使用(有IMU的话会使用IMU进行补偿)
 void transformUpdate()
 {
-  if (imuPointerLast >= 0) {
-    float imuRollLast = 0, imuPitchLast = 0;
-    //查找点云时间戳小于imu时间戳的imu位置
-    while (imuPointerFront != imuPointerLast) {
-      if (timeLaserOdometry + scanPeriod < imuTime[imuPointerFront]) {
-        break;
-      }
-      imuPointerFront = (imuPointerFront + 1) % imuQueLength;
-    }
-
-    if (timeLaserOdometry + scanPeriod > imuTime[imuPointerFront]) {//未找到,此时imuPointerFront==imuPointerLast
-      imuRollLast = imuRoll[imuPointerFront];
-      imuPitchLast = imuPitch[imuPointerFront];
-    } else {
-      int imuPointerBack = (imuPointerFront + imuQueLength - 1) % imuQueLength;
-      float ratioFront = (timeLaserOdometry + scanPeriod - imuTime[imuPointerBack]) 
-                       / (imuTime[imuPointerFront] - imuTime[imuPointerBack]);
-      float ratioBack = (imuTime[imuPointerFront] - timeLaserOdometry - scanPeriod) 
-                      / (imuTime[imuPointerFront] - imuTime[imuPointerBack]);
-
-      //按时间比例求翻滚角和俯仰角
-      imuRollLast = imuRoll[imuPointerFront] * ratioFront + imuRoll[imuPointerBack] * ratioBack;
-      imuPitchLast = imuPitch[imuPointerFront] * ratioFront + imuPitch[imuPointerBack] * ratioBack;
-    }
-
-    //imu稍微补偿俯仰角和翻滚角
-    transformTobeMapped[0] = 0.998 * transformTobeMapped[0] + 0.002 * imuPitchLast;
-    transformTobeMapped[2] = 0.998 * transformTobeMapped[2] + 0.002 * imuRollLast;
-  }
-
   //记录优化之前与之后的转移矩阵
   for (int i = 0; i < 6; i++) {
     transformBefMapped[i] = transformSum[i];
@@ -281,6 +245,7 @@ void transformUpdate()
 //根据调整计算后的转移矩阵，将点注册到全局世界坐标系下
 void pointAssociateToMap(PointType const * const pi, PointType * const po)
 {
+  // p_w = R_w_curr * p_curr + t_w_curr
   //绕z轴旋转（transformTobeMapped[2]）
   float x1 = cos(transformTobeMapped[2]) * pi->x
            - sin(transformTobeMapped[2]) * pi->y;
@@ -305,6 +270,7 @@ void pointAssociateToMap(PointType const * const pi, PointType * const po)
 //点转移到局部坐标系下
 void pointAssociateTobeMapped(PointType const * const pi, PointType * const po)
 {
+  // p_curr = R_w_curr.inverse() * (p_w - t_w_curr)
   //平移后绕y轴旋转（-transformTobeMapped[1]）
   float x1 = cos(transformTobeMapped[1]) * (pi->x - transformTobeMapped[3]) 
            - sin(transformTobeMapped[1]) * (pi->z - transformTobeMapped[5]);
@@ -380,21 +346,6 @@ void laserOdometryHandler(const nav_msgs::Odometry::ConstPtr& laserOdometry)
   newLaserOdometry = true;
 }
 
-//接收IMU信息，只使用了翻滚角和俯仰角
-void imuHandler(const sensor_msgs::Imu::ConstPtr& imuIn)
-{
-  double roll, pitch, yaw;
-  tf::Quaternion orientation;
-  tf::quaternionMsgToTF(imuIn->orientation, orientation);
-  tf::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
-
-  imuPointerLast = (imuPointerLast + 1) % imuQueLength;
-
-  imuTime[imuPointerLast] = imuIn->header.stamp.toSec();
-  imuRoll[imuPointerLast] = roll;
-  imuPitch[imuPointerLast] = pitch;
-}
-
 int main(int argc, char** argv)
 {
   ros::init(argc, argv, "laserMapping");
@@ -412,8 +363,6 @@ int main(int argc, char** argv)
   ros::Subscriber subLaserCloudFullRes = nh.subscribe<sensor_msgs::PointCloud2> 
                                          ("/velodyne_cloud_3", 2, laserCloudFullResHandler);
 
-  ros::Subscriber subImu = nh.subscribe<sensor_msgs::Imu> ("/imu/data", 50, imuHandler);
-
   ros::Publisher pubLaserCloudSurround = nh.advertise<sensor_msgs::PointCloud2> 
                                          ("/laser_cloud_surround", 1);
 
@@ -421,11 +370,6 @@ int main(int argc, char** argv)
                                         ("/velodyne_cloud_registered", 2);
 
   ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry> ("/aft_mapped_to_init", 5);
-
-  ros::Publisher pubLaserPath = nh.advertise<nav_msgs::Path>("/aft_mapped_path", 5);
-  nav_msgs::Path laserPath;
-  laserPath.header.frame_id = "/camera_init";
-
   nav_msgs::Odometry odomAftMapped;
   odomAftMapped.header.frame_id = "/camera_init";
   odomAftMapped.child_frame_id = "/aft_mapped";
@@ -434,6 +378,10 @@ int main(int argc, char** argv)
   tf::StampedTransform aftMappedTrans;
   aftMappedTrans.frame_id_ = "/camera_init";
   aftMappedTrans.child_frame_id_ = "/aft_mapped";
+
+  ros::Publisher pubLaserAfterMappedPath = nh.advertise<nav_msgs::Path> ("/laser_after_mapped_path", 5);
+  nav_msgs::Path laserAfterMappedPath;
+  laserAfterMappedPath.header.frame_id = "/camera_init";
 
   std::vector<int> pointSearchInd;
   std::vector<float> pointSearchSqDis;
@@ -738,13 +686,15 @@ int main(int argc, char** argv)
                       float squaredSide2 = (pointOnYAxis.x - cornerX) * (pointOnYAxis.x - cornerX) 
                                          + (pointOnYAxis.y - cornerY) * (pointOnYAxis.y - cornerY)
                                          + (pointOnYAxis.z - cornerZ) * (pointOnYAxis.z - cornerZ);
-
+                      
+                      // By the law of cosines, we have a^2 + b^2 - c^2 = 2ab * cos(theta)
                       float check1 = 100.0 + squaredSide1 - squaredSide2
                                    - 10.0 * sqrt(3.0) * sqrt(squaredSide1);
 
                       float check2 = 100.0 + squaredSide1 - squaredSide2
                                    + 10.0 * sqrt(3.0) * sqrt(squaredSide1);
 
+                      // -60 ~ +60 ???
                       if (check1 < 0 && check2 > 0) {//if |100 + squaredSide1 - squaredSide2| < 10.0 * sqrt(3.0) * sqrt(squaredSide1)
                         isInLaserFOV = true;
                       }
@@ -822,7 +772,7 @@ int main(int argc, char** argv)
               if (pointSearchSqDis[4] < 1.0) {//5个点中最大距离不超过1才处理
                 //将五个最近点的坐标加和求平均
                 float cx = 0;
-                float cy = 0; 
+                float cy = 0;
                 float cz = 0;
                 for (int j = 0; j < 5; j++) {
                   cx += laserCloudCornerFromMap->points[pointSearchInd[j]].x;
@@ -834,6 +784,7 @@ int main(int argc, char** argv)
                 cz /= 5;
 
                 //求均方差
+                // construct vectors in line direction
                 float a11 = 0;
                 float a12 = 0; 
                 float a13 = 0;
@@ -873,11 +824,14 @@ int main(int argc, char** argv)
                 //特征值分解
                 cv::eigen(matA1, matD1, matV1);
 
+                // if is indeed line feature
                 if (matD1.at<float>(0, 0) > 3 * matD1.at<float>(0, 1)) {//如果最大的特征值大于第二大的特征值三倍以上
 
                   float x0 = pointSel.x;
                   float y0 = pointSel.y;
                   float z0 = pointSel.z;
+                  // the first column of matV1 is line direction with norm 1
+                  // here A(x1, y1, z1) and B(x2, y2, z2) are two points sampled from fitted line
                   float x1 = cx + 0.1 * matV1.at<float>(0, 0);
                   float y1 = cy + 0.1 * matV1.at<float>(0, 1);
                   float z1 = cz + 0.1 * matV1.at<float>(0, 2);
@@ -885,15 +839,18 @@ int main(int argc, char** argv)
                   float y2 = cy - 0.1 * matV1.at<float>(0, 1);
                   float z2 = cz - 0.1 * matV1.at<float>(0, 2);
 
+                  // norm_OAxOB
                   float a012 = sqrt(((x0 - x1)*(y0 - y2) - (x0 - x2)*(y0 - y1))
                              * ((x0 - x1)*(y0 - y2) - (x0 - x2)*(y0 - y1)) 
                              + ((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1))
                              * ((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1)) 
                              + ((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1))
                              * ((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1)));
-
+                  
+                  // norm_AB
                   float l12 = sqrt((x1 - x2)*(x1 - x2) + (y1 - y2)*(y1 - y2) + (z1 - z2)*(z1 - z2));
 
+                  // AB_cross_OAxOB
                   float la = ((y1 - y2)*((x0 - x1)*(y0 - y2) - (x0 - x2)*(y0 - y1)) 
                            + (z1 - z2)*((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1))) / a012 / l12;
 
@@ -904,12 +861,6 @@ int main(int argc, char** argv)
                            + (y1 - y2)*((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1))) / a012 / l12;
 
                   float ld2 = a012 / l12;
-
-                  //unused
-                  pointProj = pointSel;
-                  pointProj.x -= la * ld2;
-                  pointProj.y -= lb * ld2;
-                  pointProj.z -= lc * ld2;
 
                   //权重系数计算
                   float s = 1 - 0.9 * fabs(ld2);
@@ -940,6 +891,7 @@ int main(int argc, char** argv)
                   matA0.at<float>(j, 2) = laserCloudSurfFromMap->points[pointSearchInd[j]].z;
                 }
                 //求解matA0*matX0=matB0
+                // find the norm of plane
                 cv::solve(matA0, matB0, matX0, cv::DECOMP_QR);
 
                 float pa = matX0.at<float>(0, 0);
@@ -953,8 +905,11 @@ int main(int argc, char** argv)
                 pc /= ps;
                 pd /= ps;
 
+                // Here n(pa, pb, pc) is unit norm of plane
+
                 bool planeValid = true;
                 for (int j = 0; j < 5; j++) {
+                  // if OX * n > 0.2, then plane is not fit well
                   if (fabs(pa * laserCloudSurfFromMap->points[pointSearchInd[j]].x +
                       pb * laserCloudSurfFromMap->points[pointSearchInd[j]].y +
                       pc * laserCloudSurfFromMap->points[pointSearchInd[j]].z + pd) > 0.2) {
@@ -965,12 +920,6 @@ int main(int argc, char** argv)
 
                 if (planeValid) {
                   float pd2 = pa * pointSel.x + pb * pointSel.y + pc * pointSel.z + pd;
-
-                  //unused
-                  pointProj = pointSel;
-                  pointProj.x -= pa * pd2;
-                  pointProj.y -= pb * pd2;
-                  pointProj.z -= pc * pd2;
 
                   float s = 1 - 0.9 * fabs(pd2) / sqrt(sqrt(pointSel.x * pointSel.x
                           + pointSel.y * pointSel.y + pointSel.z * pointSel.z));
@@ -1213,12 +1162,12 @@ int main(int argc, char** argv)
         odomAftMapped.twist.twist.linear.z = transformBefMapped[5];
         pubOdomAftMapped.publish(odomAftMapped);
 
-        geometry_msgs::PoseStamped laserPose;
-        laserPose.header = odomAftMapped.header;
-        laserPose.pose = odomAftMapped.pose.pose;
-        laserPath.header.stamp = odomAftMapped.header.stamp;
-        laserPath.poses.push_back(laserPose);
-        pubLaserPath.publish(laserPath);
+        geometry_msgs::PoseStamped laserAfterMappedPose;
+        laserAfterMappedPose.header = odomAftMapped.header;
+        laserAfterMappedPose.pose = odomAftMapped.pose.pose;
+        laserAfterMappedPath.header.stamp = odomAftMapped.header.stamp;
+        laserAfterMappedPath.poses.push_back(laserAfterMappedPose);
+        pubLaserAfterMappedPath.publish(laserAfterMappedPath);
 
         //广播坐标系旋转平移参量
         aftMappedTrans.stamp_ = ros::Time().fromSec(timeLaserOdometry);
@@ -1226,6 +1175,8 @@ int main(int argc, char** argv)
         aftMappedTrans.setOrigin(tf::Vector3(transformAftMapped[3], 
                                              transformAftMapped[4], transformAftMapped[5]));
         tfBroadcaster.sendTransform(aftMappedTrans);
+
+        
 
       }
     }

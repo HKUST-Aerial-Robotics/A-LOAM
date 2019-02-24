@@ -360,6 +360,8 @@ int main(int argc, char **argv)
                 int cornerPointsSharpNum = cornerPointsSharp->points.size();
                 int surfPointsFlatNum = surfPointsFlat->points.size();
                 
+                // zero initial guess
+                /*
                 para_q[0] = 0;
                 para_q[1] = 0;
                 para_q[2] = 0;
@@ -367,7 +369,7 @@ int main(int argc, char **argv)
                 para_t[0] = 0;
                 para_t[1] = 0;
                 para_t[2] = 0;
-                
+                */
                 for (size_t opti_counter = 0; opti_counter < 2; ++opti_counter)
                 {
                     // LOG(INFO) << "******************************* " << opti_counter << " ***************************************";
@@ -407,7 +409,7 @@ int main(int argc, char **argv)
                     {
                         Eigen::Matrix3d rela_R_gt;
                         Eigen::Vector3d rela_t_gt;
-                        getRelativeGTPose(timeCornerPointsSharp + 0.1, timeCornerPointsSharp, rela_R_gt, rela_t_gt);
+                        getRelativeGTPose(timeCornerPointsSharp, timeCornerPointsSharp-0.1, rela_R_gt, rela_t_gt);
                         Eigen::Quaterniond rela_q_gt(rela_R_gt);
                         //printf("gt relative q %f %f %f %f t %f %f %f \n", rela_q_gt.w(), rela_q_gt.x(), rela_q_gt.y(), rela_q_gt.z(),
                         //                                                  rela_t_gt.x(), rela_t_gt.y(), rela_t_gt.z());
@@ -564,8 +566,6 @@ int main(int argc, char **argv)
                                e = ((t_cur - last_point_a).cross((t_cur - last_point_b))).norm() / (last_point_a - last_point_b).norm();
                                printf("error my %f \n", e);
                             }
-                           
-                           
                         }
                     }
 
@@ -731,13 +731,14 @@ int main(int argc, char **argv)
                     ceres::Solver::Summary summary;
                     ceres::Solve(options, &problem, &summary);
 
+                    /*
                     LOG(INFO) << summary.BriefReport();
                     LOG(INFO) << "parameter is " << para_t[0] << ", " << para_t[1] << ", " << para_t[2]
                                                  << ", " << para_q[3] << ", " << para_q[0] << ", " << para_q[1]
                                                  << ", " << para_q[2];
                     LOG(INFO) << "corner : " << corner_correspondence << ", and plane : " << plane_correspondence << '\n';
                     corner_correspondence = plane_correspondence = 0;
-
+                    */
 
                 }
 
@@ -753,7 +754,7 @@ int main(int argc, char **argv)
                                                          t_w_curr.x(), t_w_curr.y(), t_w_curr.z());
                     Eigen::Matrix3d R_gt;
                     Eigen::Vector3d t_gt;
-                    getGTPose(timeCornerPointsSharp + 0.1, R_gt, t_gt);
+                    getGTPose(timeCornerPointsSharp, R_gt, t_gt);
                     Eigen::Quaterniond q_gt(R_gt);
 
                     printf("gt q %f %f %f %f t %f %f %f \n",q_gt.w(), q_gt.x(), q_gt.y(), q_gt.z(), 
@@ -765,7 +766,7 @@ int main(int argc, char **argv)
 
                     Eigen::Matrix3d rela_R_gt;
                     Eigen::Vector3d rela_t_gt;
-                    getRelativeGTPose(timeCornerPointsSharp + 0.1, timeCornerPointsSharp, rela_R_gt, rela_t_gt);
+                    getRelativeGTPose(timeCornerPointsSharp, timeCornerPointsSharp - 0.1, rela_R_gt, rela_t_gt);
                     Eigen::Quaterniond rela_q_gt(rela_R_gt);
                     printf("gt relative q %f %f %f %f t %f %f %f \n", rela_q_gt.w(), rela_q_gt.x(), rela_q_gt.y(), rela_q_gt.z(),
                                                                       rela_t_gt.x(), rela_t_gt.y(), rela_t_gt.z());
@@ -783,7 +784,7 @@ int main(int argc, char **argv)
 
                     Eigen::Matrix3d rela_R_gt;
                     Eigen::Vector3d rela_t_gt;
-                    getRelativeGTPose(timeCornerPointsSharp + 0.1, timeCornerPointsSharp, rela_R_gt, rela_t_gt);
+                    getRelativeGTPose(timeCornerPointsSharp, timeCornerPointsSharp - 0.1, rela_R_gt, rela_t_gt);
                     Eigen::Quaterniond rela_q_gt(rela_R_gt);
                     //printf("gt relative q %f %f %f %f t %f %f %f \n", rela_q_gt.w(), rela_q_gt.x(), rela_q_gt.y(), rela_q_gt.z(),
                     //                                                  rela_t_gt.x(), rela_t_gt.y(), rela_t_gt.z());

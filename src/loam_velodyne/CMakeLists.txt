@@ -46,6 +46,9 @@ target_link_libraries(my_laserOdometry ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${Op
 add_executable(laserMapping src/laserMapping.cpp)
 target_link_libraries(laserMapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS} dw)
 
+add_executable(my_laserMapping src/laserMappingNoIMU_v2.cpp)
+target_link_libraries(my_laserMapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES} dw)
+
 add_executable(transformMaintenance src/transformMaintenance.cpp)
 target_link_libraries(transformMaintenance ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS})
 

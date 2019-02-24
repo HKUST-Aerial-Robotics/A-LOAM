@@ -1,47 +1,9 @@
-#define BACKWARD_HAS_DW 1
-#include <backward.hpp>
-namespace backward
-{
-backward::SignalHandling sh;
-} // namespace backward
-
-// Copyright 2013, Ji Zhang, Carnegie Mellon University
-// Further contributions copyright (c) 2016, Southwest Research Institute
-// All rights reserved.
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are met:
-//
-// 1. Redistributions of source code must retain the above copyright notice,
-//    this list of conditions and the following disclaimer.
-// 2. Redistributions in binary form must reproduce the above copyright notice,
-//    this list of conditions and the following disclaimer in the documentation
-//    and/or other materials provided with the distribution.
-// 3. Neither the name of the copyright holder nor the names of its
-//    contributors may be used to endorse or promote products derived from this
-//    software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-// AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-// ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
-// LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-// CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-// SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
-// INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
-// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
-// ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
-// POSSIBILITY OF SUCH DAMAGE.
-//
-// This is an implementation of the algorithm described in the following paper:
-//   J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time.
-//     Robotics: Science and Systems Conference (RSS). Berkeley, CA, July 2014.
-
 #include <math.h>
-
+#include <vector>
 #include <loam_velodyne/common.h>
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
+#include <geometry_msgs/PoseStamped.h>
 #include <opencv/cv.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
@@ -53,6 +15,18 @@ backward::SignalHandling sh;
 #include <sensor_msgs/PointCloud2.h>
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
+#include <eigen3/Eigen/Dense>
+#include <ceres/ceres.h>
+
+#include "lidarFactor_v6.cpp"
+#include "loam_velodyne/common.h"
+
+#define BACKWARD_HAS_DW 1	
+#include <backward.hpp>	
+namespace backward	
+{	
+backward::SignalHandling sh;	
+} // namespace backward
 
 //扫描周期
 const float scanPeriod = 0.1;
@@ -127,202 +101,113 @@ pcl::PointCloud<PointType>::Ptr laserCloudSurfArray2[laserCloudNum];
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeCornerFromMap(new pcl::KdTreeFLANN<PointType>());
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeSurfFromMap(new pcl::KdTreeFLANN<PointType>());
 
-/*************高频转换量**************/
-//odometry计算得到的到世界坐标系下的转移矩阵
-float transformSum[6] = {0};
-//转移增量，只使用了后三个平移增量
-float transformIncre[6] = {0};
+Eigen::Quaterniond q_w_curr_tilde(1, 0, 0, 0);
+Eigen::Vector3d    t_w_curr_tilde(0, 0, 0);
 
-/*************低频转换量*************/
-//以起始位置为原点的世界坐标系下的转换矩阵（猜测与调整的对象）
-float transformTobeMapped[6] = {0};
-//存放mapping之前的Odometry计算的世界坐标系的转换矩阵（注：低频量，不一定与transformSum一样）
-float transformBefMapped[6] = {0};
-//存放mapping之后的经过mapping微调之后的转换矩阵
-float transformAftMapped[6] = {0};
+double parameters[7] = {0, 0, 0, 1, 0, 0, 0};
+Eigen::Map<Eigen::Quaterniond> q_w_curr(parameters);
+Eigen::Map<Eigen::Vector3d>    t_w_curr(parameters+4);
 
-int imuPointerFront = 0;
-int imuPointerLast = -1;
-const int imuQueLength = 200;
+Eigen::Quaterniond q_w_last_tilde(1, 0, 0, 0);
+Eigen::Vector3d    t_w_last_tilde(0, 0, 0);
 
-double imuTime[imuQueLength] = {0};
-float imuRoll[imuQueLength] = {0};
-float imuPitch[imuQueLength] = {0};
+Eigen::Quaterniond q_w_last(1, 0, 0, 0);
+Eigen::Vector3d    t_w_last(0, 0, 0);
+
+#define TIME_STILL 1
+
+inline Eigen::Matrix3d RPY2RotationMatrix(double roll, double pitch, double yaw)
+{
+    return (Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX()) *
+            Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *
+            Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ())).toRotationMatrix();
+}
+
+void getGTPose(double timestamp, Eigen::Matrix3d &R_w_curr, Eigen::Vector3d &t_w_curr)
+{
+    double LINE_VELOCITY = 0.2;  // velocity: 0.2 m/s
+    // NOTE: some velocity may cause multiple solution to a specific point due to lidar rotation and scan
+    // double roll_velocity = 0;
+    // double pitch_velocity = 0;
+    // double yaw_velocity = 0;
+    double ROLL_VELOCITY = 0 * M_PI;
+    double PITCH_VELOCITY = 0.02 * M_PI;
+    double YAW_VELOCITY = 0.02 * M_PI;
+
+    if (timestamp < TIME_STILL)
+    {
+        R_w_curr = Eigen::Matrix3d::Identity();
+        t_w_curr = Eigen::Vector3d::Zero();
+    }
+    else
+    {
+        double move_time = timestamp - TIME_STILL;
+
+        R_w_curr = RPY2RotationMatrix(ROLL_VELOCITY*move_time, PITCH_VELOCITY*move_time, YAW_VELOCITY*move_time);
+        t_w_curr << move_time*LINE_VELOCITY, move_time*LINE_VELOCITY, sin(10*move_time*LINE_VELOCITY);
+    }
+
+}
+
+void getRelativeGTPose(double timestamp_curr, double timestamp_last, Eigen::Matrix3d &R_last_curr, Eigen::Vector3d &t_last_curr)
+{
+    Eigen::Matrix3d R_curr, R_last;
+    Eigen::Vector3d t_curr, t_last;
+
+    getGTPose(timestamp_curr, R_curr, t_curr);
+    getGTPose(timestamp_last, R_last, t_last);
+
+    Eigen::Matrix4d T_curr = Eigen::Matrix4d::Identity();
+    Eigen::Matrix4d T_last = Eigen::Matrix4d::Identity();
+
+    T_curr.block<3, 3>(0, 0) = R_curr;
+    T_curr.block<3, 1>(0, 3) = t_curr;
+
+    T_last.block<3, 3>(0, 0) = R_last;
+    T_last.block<3, 1>(0, 3) = t_last;
+
+    Eigen::Matrix4d T_last_curr = T_last.inverse() * T_curr;
+
+    R_last_curr = T_last_curr.block<3, 3>(0, 0);
+    t_last_curr = T_last_curr.block<3, 1>(0, 3);
+}
 
 //基于匀速模型，根据上次微调的结果和odometry这次与上次计算的结果，猜测一个新的世界坐标系的转换矩阵transformTobeMapped
 void transformAssociateToMap()
 {
-  float x1 = cos(transformSum[1]) * (transformBefMapped[3] - transformSum[3]) 
-           - sin(transformSum[1]) * (transformBefMapped[5] - transformSum[5]);
-  float y1 = transformBefMapped[4] - transformSum[4];
-  float z1 = sin(transformSum[1]) * (transformBefMapped[3] - transformSum[3]) 
-           + cos(transformSum[1]) * (transformBefMapped[5] - transformSum[5]);
-
-  float x2 = x1;
-  float y2 = cos(transformSum[0]) * y1 + sin(transformSum[0]) * z1;
-  float z2 = -sin(transformSum[0]) * y1 + cos(transformSum[0]) * z1;
-
-  //平移增量
-  transformIncre[3] = cos(transformSum[2]) * x2 + sin(transformSum[2]) * y2;
-  transformIncre[4] = -sin(transformSum[2]) * x2 + cos(transformSum[2]) * y2;
-  transformIncre[5] = z2;
-
-  float sbcx = sin(transformSum[0]);
-  float cbcx = cos(transformSum[0]);
-  float sbcy = sin(transformSum[1]);
-  float cbcy = cos(transformSum[1]);
-  float sbcz = sin(transformSum[2]);
-  float cbcz = cos(transformSum[2]);
-
-  float sblx = sin(transformBefMapped[0]);
-  float cblx = cos(transformBefMapped[0]);
-  float sbly = sin(transformBefMapped[1]);
-  float cbly = cos(transformBefMapped[1]);
-  float sblz = sin(transformBefMapped[2]);
-  float cblz = cos(transformBefMapped[2]);
-
-  float salx = sin(transformAftMapped[0]);
-  float calx = cos(transformAftMapped[0]);
-  float saly = sin(transformAftMapped[1]);
-  float caly = cos(transformAftMapped[1]);
-  float salz = sin(transformAftMapped[2]);
-  float calz = cos(transformAftMapped[2]);
-
-  float srx = -sbcx*(salx*sblx + calx*cblx*salz*sblz + calx*calz*cblx*cblz)
-            - cbcx*sbcy*(calx*calz*(cbly*sblz - cblz*sblx*sbly)
-            - calx*salz*(cbly*cblz + sblx*sbly*sblz) + cblx*salx*sbly)
-            - cbcx*cbcy*(calx*salz*(cblz*sbly - cbly*sblx*sblz) 
-            - calx*calz*(sbly*sblz + cbly*cblz*sblx) + cblx*cbly*salx);
-  transformTobeMapped[0] = -asin(srx);
-
-  float srycrx = sbcx*(cblx*cblz*(caly*salz - calz*salx*saly)
-               - cblx*sblz*(caly*calz + salx*saly*salz) + calx*saly*sblx)
-               - cbcx*cbcy*((caly*calz + salx*saly*salz)*(cblz*sbly - cbly*sblx*sblz)
-               + (caly*salz - calz*salx*saly)*(sbly*sblz + cbly*cblz*sblx) - calx*cblx*cbly*saly)
-               + cbcx*sbcy*((caly*calz + salx*saly*salz)*(cbly*cblz + sblx*sbly*sblz)
-               + (caly*salz - calz*salx*saly)*(cbly*sblz - cblz*sblx*sbly) + calx*cblx*saly*sbly);
-  float crycrx = sbcx*(cblx*sblz*(calz*saly - caly*salx*salz)
-               - cblx*cblz*(saly*salz + caly*calz*salx) + calx*caly*sblx)
-               + cbcx*cbcy*((saly*salz + caly*calz*salx)*(sbly*sblz + cbly*cblz*sblx)
-               + (calz*saly - caly*salx*salz)*(cblz*sbly - cbly*sblx*sblz) + calx*caly*cblx*cbly)
-               - cbcx*sbcy*((saly*salz + caly*calz*salx)*(cbly*sblz - cblz*sblx*sbly)
-               + (calz*saly - caly*salx*salz)*(cbly*cblz + sblx*sbly*sblz) - calx*caly*cblx*sbly);
-  transformTobeMapped[1] = atan2(srycrx / cos(transformTobeMapped[0]), 
-                                 crycrx / cos(transformTobeMapped[0]));
-  
-  float srzcrx = (cbcz*sbcy - cbcy*sbcx*sbcz)*(calx*salz*(cblz*sbly - cbly*sblx*sblz)
-               - calx*calz*(sbly*sblz + cbly*cblz*sblx) + cblx*cbly*salx)
-               - (cbcy*cbcz + sbcx*sbcy*sbcz)*(calx*calz*(cbly*sblz - cblz*sblx*sbly)
-               - calx*salz*(cbly*cblz + sblx*sbly*sblz) + cblx*salx*sbly)
-               + cbcx*sbcz*(salx*sblx + calx*cblx*salz*sblz + calx*calz*cblx*cblz);
-  float crzcrx = (cbcy*sbcz - cbcz*sbcx*sbcy)*(calx*calz*(cbly*sblz - cblz*sblx*sbly)
-               - calx*salz*(cbly*cblz + sblx*sbly*sblz) + cblx*salx*sbly)
-               - (sbcy*sbcz + cbcy*cbcz*sbcx)*(calx*salz*(cblz*sbly - cbly*sblx*sblz)
-               - calx*calz*(sbly*sblz + cbly*cblz*sblx) + cblx*cbly*salx)
-               + cbcx*cbcz*(salx*sblx + calx*cblx*salz*sblz + calx*calz*cblx*cblz);
-  transformTobeMapped[2] = atan2(srzcrx / cos(transformTobeMapped[0]), 
-                                 crzcrx / cos(transformTobeMapped[0]));
-
-  x1 = cos(transformTobeMapped[2]) * transformIncre[3] - sin(transformTobeMapped[2]) * transformIncre[4];
-  y1 = sin(transformTobeMapped[2]) * transformIncre[3] + cos(transformTobeMapped[2]) * transformIncre[4];
-  z1 = transformIncre[5];
-
-  x2 = x1;
-  y2 = cos(transformTobeMapped[0]) * y1 - sin(transformTobeMapped[0]) * z1;
-  z2 = sin(transformTobeMapped[0]) * y1 + cos(transformTobeMapped[0]) * z1;
-
-  transformTobeMapped[3] = transformAftMapped[3] 
-                         - (cos(transformTobeMapped[1]) * x2 + sin(transformTobeMapped[1]) * z2);
-  transformTobeMapped[4] = transformAftMapped[4] - y2;
-  transformTobeMapped[5] = transformAftMapped[5] 
-                         - (-sin(transformTobeMapped[1]) * x2 + cos(transformTobeMapped[1]) * z2);
+  Eigen::Vector3d t_curr_last_tilde = q_w_curr_tilde.inverse() * (t_w_last_tilde - t_w_curr_tilde);
+  q_w_curr = q_w_last * q_w_last_tilde * q_w_curr_tilde;
+  t_w_curr = t_w_last - q_w_curr * t_curr_last_tilde;
 }
 
 //记录odometry发送的转换矩阵与mapping之后的转换矩阵，下一帧点云会使用(有IMU的话会使用IMU进行补偿)
 void transformUpdate()
 {
-  if (imuPointerLast >= 0) {
-    float imuRollLast = 0, imuPitchLast = 0;
-    //查找点云时间戳小于imu时间戳的imu位置
-    while (imuPointerFront != imuPointerLast) {
-      if (timeLaserOdometry + scanPeriod < imuTime[imuPointerFront]) {
-        break;
-      }
-      imuPointerFront = (imuPointerFront + 1) % imuQueLength;
-    }
-
-    if (timeLaserOdometry + scanPeriod > imuTime[imuPointerFront]) {//未找到,此时imuPointerFront==imuPointerLast
-      imuRollLast = imuRoll[imuPointerFront];
-      imuPitchLast = imuPitch[imuPointerFront];
-    } else {
-      int imuPointerBack = (imuPointerFront + imuQueLength - 1) % imuQueLength;
-      float ratioFront = (timeLaserOdometry + scanPeriod - imuTime[imuPointerBack]) 
-                       / (imuTime[imuPointerFront] - imuTime[imuPointerBack]);
-      float ratioBack = (imuTime[imuPointerFront] - timeLaserOdometry - scanPeriod) 
-                      / (imuTime[imuPointerFront] - imuTime[imuPointerBack]);
-
-      //按时间比例求翻滚角和俯仰角
-      imuRollLast = imuRoll[imuPointerFront] * ratioFront + imuRoll[imuPointerBack] * ratioBack;
-      imuPitchLast = imuPitch[imuPointerFront] * ratioFront + imuPitch[imuPointerBack] * ratioBack;
-    }
-
-    //imu稍微补偿俯仰角和翻滚角
-    transformTobeMapped[0] = 0.998 * transformTobeMapped[0] + 0.002 * imuPitchLast;
-    transformTobeMapped[2] = 0.998 * transformTobeMapped[2] + 0.002 * imuRollLast;
-  }
-
-  //记录优化之前与之后的转移矩阵
-  for (int i = 0; i < 6; i++) {
-    transformBefMapped[i] = transformSum[i];
-    transformAftMapped[i] = transformTobeMapped[i];
-  }
+  q_w_last_tilde = q_w_curr_tilde;
+  t_w_last_tilde = t_w_curr_tilde;
+  q_w_last = q_w_curr;
+  t_w_last = t_w_curr;
 }
 
 //根据调整计算后的转移矩阵，将点注册到全局世界坐标系下
 void pointAssociateToMap(PointType const * const pi, PointType * const po)
 {
-  //绕z轴旋转（transformTobeMapped[2]）
-  float x1 = cos(transformTobeMapped[2]) * pi->x
-           - sin(transformTobeMapped[2]) * pi->y;
-  float y1 = sin(transformTobeMapped[2]) * pi->x
-           + cos(transformTobeMapped[2]) * pi->y;
-  float z1 = pi->z;
-
-  //绕x轴旋转（transformTobeMapped[0]）
-  float x2 = x1;
-  float y2 = cos(transformTobeMapped[0]) * y1 - sin(transformTobeMapped[0]) * z1;
-  float z2 = sin(transformTobeMapped[0]) * y1 + cos(transformTobeMapped[0]) * z1;
-
-  //绕y轴旋转（transformTobeMapped[1]），再平移
-  po->x = cos(transformTobeMapped[1]) * x2 + sin(transformTobeMapped[1]) * z2
-        + transformTobeMapped[3];
-  po->y = y2 + transformTobeMapped[4];
-  po->z = -sin(transformTobeMapped[1]) * x2 + cos(transformTobeMapped[1]) * z2
-        + transformTobeMapped[5];
+  Eigen::Vector3d point_curr(pi->x, pi->y, pi->z);
+  Eigen::Vector3d point_w = q_w_curr * point_curr + t_w_curr;
+  po->x = point_w.x();
+  po->y = point_w.y();
+  po->z = point_w.z();
   po->intensity = pi->intensity;
 }
 
 //点转移到局部坐标系下
 void pointAssociateTobeMapped(PointType const * const pi, PointType * const po)
 {
-  //平移后绕y轴旋转（-transformTobeMapped[1]）
-  float x1 = cos(transformTobeMapped[1]) * (pi->x - transformTobeMapped[3]) 
-           - sin(transformTobeMapped[1]) * (pi->z - transformTobeMapped[5]);
-  float y1 = pi->y - transformTobeMapped[4];
-  float z1 = sin(transformTobeMapped[1]) * (pi->x - transformTobeMapped[3]) 
-           + cos(transformTobeMapped[1]) * (pi->z - transformTobeMapped[5]);
-
-  //绕x轴旋转（-transformTobeMapped[0]）
-  float x2 = x1;
-  float y2 = cos(transformTobeMapped[0]) * y1 + sin(transformTobeMapped[0]) * z1;
-  float z2 = -sin(transformTobeMapped[0]) * y1 + cos(transformTobeMapped[0]) * z1;
-
-  //绕z轴旋转（-transformTobeMapped[2]）
-  po->x = cos(transformTobeMapped[2]) * x2
-        + sin(transformTobeMapped[2]) * y2;
-  po->y = -sin(transformTobeMapped[2]) * x2
-        + cos(transformTobeMapped[2]) * y2;
-  po->z = z2;
+  Eigen::Vector3d point_w(pi->x, pi->y, pi->z);
+  Eigen::Vector3d point_curr = q_w_curr.inverse() * (point_w - t_w_curr);
+  po->x = point_curr.x();
+  po->y = point_curr.y();
+  po->z = point_curr.z();
   po->intensity = pi->intensity;
 }
 
@@ -363,36 +248,16 @@ void laserCloudFullResHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloud
 void laserOdometryHandler(const nav_msgs::Odometry::ConstPtr& laserOdometry)
 {
   timeLaserOdometry = laserOdometry->header.stamp.toSec();
-
-  double roll, pitch, yaw;
-  //四元数转换为欧拉角
-  geometry_msgs::Quaternion geoQuat = laserOdometry->pose.pose.orientation;
-  tf::Matrix3x3(tf::Quaternion(geoQuat.z, -geoQuat.x, -geoQuat.y, geoQuat.w)).getRPY(roll, pitch, yaw);
-
-  transformSum[0] = -pitch;
-  transformSum[1] = -yaw;
-  transformSum[2] = roll;
-
-  transformSum[3] = laserOdometry->pose.pose.position.x;
-  transformSum[4] = laserOdometry->pose.pose.position.y;
-  transformSum[5] = laserOdometry->pose.pose.position.z;
+  
+  q_w_curr_tilde.x() = laserOdometry->pose.pose.orientation.x;
+  q_w_curr_tilde.y() = laserOdometry->pose.pose.orientation.y;
+  q_w_curr_tilde.z() = laserOdometry->pose.pose.orientation.z;
+  q_w_curr_tilde.w() = laserOdometry->pose.pose.orientation.w;
+  t_w_curr_tilde.x() = laserOdometry->pose.pose.position.x;
+  t_w_curr_tilde.y() = laserOdometry->pose.pose.position.y;
+  t_w_curr_tilde.z() = laserOdometry->pose.pose.position.z;
 
   newLaserOdometry = true;
-}
-
-//接收IMU信息，只使用了翻滚角和俯仰角
-void imuHandler(const sensor_msgs::Imu::ConstPtr& imuIn)
-{
-  double roll, pitch, yaw;
-  tf::Quaternion orientation;
-  tf::quaternionMsgToTF(imuIn->orientation, orientation);
-  tf::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
-
-  imuPointerLast = (imuPointerLast + 1) % imuQueLength;
-
-  imuTime[imuPointerLast] = imuIn->header.stamp.toSec();
-  imuRoll[imuPointerLast] = roll;
-  imuPitch[imuPointerLast] = pitch;
 }
 
 int main(int argc, char** argv)
@@ -412,8 +277,6 @@ int main(int argc, char** argv)
   ros::Subscriber subLaserCloudFullRes = nh.subscribe<sensor_msgs::PointCloud2> 
                                          ("/velodyne_cloud_3", 2, laserCloudFullResHandler);
 
-  ros::Subscriber subImu = nh.subscribe<sensor_msgs::Imu> ("/imu/data", 50, imuHandler);
-
   ros::Publisher pubLaserCloudSurround = nh.advertise<sensor_msgs::PointCloud2> 
                                          ("/laser_cloud_surround", 1);
 
@@ -421,11 +284,6 @@ int main(int argc, char** argv)
                                         ("/velodyne_cloud_registered", 2);
 
   ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry> ("/aft_mapped_to_init", 5);
-
-  ros::Publisher pubLaserPath = nh.advertise<nav_msgs::Path>("/aft_mapped_path", 5);
-  nav_msgs::Path laserPath;
-  laserPath.header.frame_id = "/camera_init";
-
   nav_msgs::Odometry odomAftMapped;
   odomAftMapped.header.frame_id = "/camera_init";
   odomAftMapped.child_frame_id = "/aft_mapped";
@@ -435,18 +293,14 @@ int main(int argc, char** argv)
   aftMappedTrans.frame_id_ = "/camera_init";
   aftMappedTrans.child_frame_id_ = "/aft_mapped";
 
+  ros::Publisher pubLaserAfterMappedPath = nh.advertise<nav_msgs::Path> ("/aft_mapped_path", 5);
+  nav_msgs::Path laserAfterMappedPath;
+  laserAfterMappedPath.header.frame_id = "/camera_init";
+
   std::vector<int> pointSearchInd;
   std::vector<float> pointSearchSqDis;
 
   PointType pointOri, pointSel, pointProj, coeff;
-
-  cv::Mat matA0(5, 3, CV_32F, cv::Scalar::all(0));
-  cv::Mat matB0(5, 1, CV_32F, cv::Scalar::all(-1));
-  cv::Mat matX0(3, 1, CV_32F, cv::Scalar::all(0));
-
-  cv::Mat matA1(3, 3, CV_32F, cv::Scalar::all(0));
-  cv::Mat matD1(1, 3, CV_32F, cv::Scalar::all(0));
-  cv::Mat matV1(3, 3, CV_32F, cv::Scalar::all(0));
 
   bool isDegenerate = false;
   cv::Mat matP(6, 6, CV_32F, cv::Scalar::all(0));
@@ -519,14 +373,14 @@ int main(int argc, char** argv)
         //立方体中点在世界坐标系下的（原点）位置
         //过半取一（以50米进行四舍五入的效果），由于数组下标只能为正数，而地图可能建立在原点前后，因此
         //每一维偏移一个laserCloudCenWidth（该值会动态调整，以使得数组利用最大化，初始值为该维数组长度1/2）的量
-        int centerCubeI = int((transformTobeMapped[3] + 25.0) / 50.0) + laserCloudCenWidth;
-        int centerCubeJ = int((transformTobeMapped[4] + 25.0) / 50.0) + laserCloudCenHeight;
-        int centerCubeK = int((transformTobeMapped[5] + 25.0) / 50.0) + laserCloudCenDepth;
+        int centerCubeI = int((t_w_curr.x() + 25.0) / 50.0) + laserCloudCenWidth;
+        int centerCubeJ = int((t_w_curr.y() + 25.0) / 50.0) + laserCloudCenHeight;
+        int centerCubeK = int((t_w_curr.z() + 25.0) / 50.0) + laserCloudCenDepth;
 
         //由于计算机求余是向零取整，为了不使（-50.0,50.0）求余后都向零偏移，当被求余数为负数时求余结果统一向左偏移一个单位，也即减一
-        if (transformTobeMapped[3] + 25.0 < 0) centerCubeI--;
-        if (transformTobeMapped[4] + 25.0 < 0) centerCubeJ--;
-        if (transformTobeMapped[5] + 25.0 < 0) centerCubeK--;
+        if (t_w_curr.x() + 25.0 < 0) centerCubeI--;
+        if (t_w_curr.y() + 25.0 < 0) centerCubeJ--;
+        if (t_w_curr.z() + 25.0 < 0) centerCubeK--;                          
 
         //调整之后取值范围:3 < centerCubeI < 18， 3 < centerCubeJ < 8, 3 < centerCubeK < 18
         //如果处于下边界，表明地图向负方向延伸的可能性比较大，则循环移位，将数组中心点向上边界调整一个单位
@@ -727,24 +581,26 @@ int main(int argc, char** argv)
                       float cornerZ = centerZ + 25.0 * kk;
 
                       //原点到顶点距离的平方和
-                      float squaredSide1 = (transformTobeMapped[3] - cornerX) 
-                                         * (transformTobeMapped[3] - cornerX) 
-                                         + (transformTobeMapped[4] - cornerY) 
-                                         * (transformTobeMapped[4] - cornerY)
-                                         + (transformTobeMapped[5] - cornerZ) 
-                                         * (transformTobeMapped[5] - cornerZ);
+                      float squaredSide1 = (t_w_curr.x() - cornerX) 
+                                         * (t_w_curr.x() - cornerX) 
+                                         + (t_w_curr.y() - cornerY) 
+                                         * (t_w_curr.y() - cornerY)
+                                         + (t_w_curr.z() - cornerZ) 
+                                         * (t_w_curr.z() - cornerZ);
 
                       //pointOnYAxis到顶点距离的平方和
                       float squaredSide2 = (pointOnYAxis.x - cornerX) * (pointOnYAxis.x - cornerX) 
                                          + (pointOnYAxis.y - cornerY) * (pointOnYAxis.y - cornerY)
                                          + (pointOnYAxis.z - cornerZ) * (pointOnYAxis.z - cornerZ);
-
+                      
+                      // By the law of cosines, we have a^2 + b^2 - c^2 = 2ab * cos(theta)
                       float check1 = 100.0 + squaredSide1 - squaredSide2
                                    - 10.0 * sqrt(3.0) * sqrt(squaredSide1);
 
                       float check2 = 100.0 + squaredSide1 - squaredSide2
                                    + 10.0 * sqrt(3.0) * sqrt(squaredSide1);
 
+                      // -60 ~ +60 ???                   //????????????  60 --- 30
                       if (check1 < 0 && check2 > 0) {//if |100 + squaredSide1 - squaredSide2| < 10.0 * sqrt(3.0) * sqrt(squaredSide1)
                         isInLaserFOV = true;
                       }
@@ -782,6 +638,7 @@ int main(int argc, char** argv)
           界？好像不是！后面还会转移回世界坐标系，这里是前面的逆转换，和前面一样
           应无必要，可直接对laserCloudCornerLast和laserCloudSurfLast进行下采样
         ***********************************************************************/
+        // ????
         int laserCloudCornerStackNum2 = laserCloudCornerStack2->points.size();
         for (int i = 0; i < laserCloudCornerStackNum2; i++) {
           pointAssociateTobeMapped(&laserCloudCornerStack2->points[i], &laserCloudCornerStack2->points[i]);
@@ -793,9 +650,9 @@ int main(int argc, char** argv)
         }
 
         laserCloudCornerStack->clear();
-        downSizeFilterCorner.setInputCloud(laserCloudCornerStack2);//设置滤波对象
-        downSizeFilterCorner.filter(*laserCloudCornerStack);//执行滤波处理
-        int laserCloudCornerStackNum = laserCloudCornerStack->points.size();//获取滤波后体素点尺寸
+        downSizeFilterCorner.setInputCloud(laserCloudCornerStack2);
+        downSizeFilterCorner.filter(*laserCloudCornerStack);
+        int laserCloudCornerStackNum = laserCloudCornerStack->points.size();
 
         laserCloudSurfStack->clear();
         downSizeFilterSurf.setInputCloud(laserCloudSurfStack2);
@@ -805,14 +662,29 @@ int main(int argc, char** argv)
         laserCloudCornerStack2->clear();
         laserCloudSurfStack2->clear();
 
-        if (laserCloudCornerFromMapNum > 10 && laserCloudSurfFromMapNum > 100) {
-          kdtreeCornerFromMap->setInputCloud(laserCloudCornerFromMap);//构建kd-tree
+
+        printf("map corner num %d  surf num %d \n", laserCloudCornerFromMapNum, laserCloudSurfFromMapNum);
+        if (laserCloudCornerFromMapNum > 10 && laserCloudSurfFromMapNum > 50) {
+
+          kdtreeCornerFromMap->setInputCloud(laserCloudCornerFromMap);
           kdtreeSurfFromMap->setInputCloud(laserCloudSurfFromMap);
 
-          for (int iterCount = 0; iterCount < 10; iterCount++) {//最多迭代10次
-            laserCloudOri->clear();
-            coeffSel->clear();
+          for (int iterCount = 0; iterCount < 2; iterCount++) {
 
+            ceres::LossFunction *loss_function = NULL;
+            // ceres::LossFunction *loss_function = new ceres::HuberLoss(1.0);
+            ceres::LocalParameterization *q_parameterization = 
+                new ceres::EigenQuaternionParameterization();
+            ceres::Problem::Options problem_options;
+            problem_options.cost_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
+
+            ceres::Problem problem(problem_options);
+            problem.AddParameterBlock(parameters, 4, q_parameterization);
+            problem.AddParameterBlock(parameters+4, 3);
+
+            int corner_num = 0;
+            if(1)
+            {
             for (int i = 0; i < laserCloudCornerStackNum; i++) {
               pointOri = laserCloudCornerStack->points[i];
               //转换回世界坐标系
@@ -822,7 +694,7 @@ int main(int argc, char** argv)
               if (pointSearchSqDis[4] < 1.0) {//5个点中最大距离不超过1才处理
                 //将五个最近点的坐标加和求平均
                 float cx = 0;
-                float cy = 0; 
+                float cy = 0;
                 float cz = 0;
                 for (int j = 0; j < 5; j++) {
                   cx += laserCloudCornerFromMap->points[pointSearchInd[j]].x;
@@ -834,6 +706,7 @@ int main(int argc, char** argv)
                 cz /= 5;
 
                 //求均方差
+                // construct vectors in line direction
                 float a11 = 0;
                 float a12 = 0; 
                 float a13 = 0;
@@ -852,245 +725,238 @@ int main(int argc, char** argv)
                   a23 += ay * az;
                   a33 += az * az;
                 }
+                /*
                 a11 /= 5;
                 a12 /= 5; 
                 a13 /= 5;
                 a22 /= 5;
                 a23 /= 5; 
                 a33 /= 5;
+                */
 
                 //构建矩阵
-                matA1.at<float>(0, 0) = a11;
-                matA1.at<float>(0, 1) = a12;
-                matA1.at<float>(0, 2) = a13;
-                matA1.at<float>(1, 0) = a12;
-                matA1.at<float>(1, 1) = a22;
-                matA1.at<float>(1, 2) = a23;
-                matA1.at<float>(2, 0) = a13;
-                matA1.at<float>(2, 1) = a23;
-                matA1.at<float>(2, 2) = a33;
+                Eigen::Matrix3d matA1;
+                matA1(0, 0) = a11;
+                matA1(0, 1) = a12;
+                matA1(0, 2) = a13;
+                matA1(1, 0) = a12;
+                matA1(1, 1) = a22;
+                matA1(1, 2) = a23;
+                matA1(2, 0) = a13;
+                matA1(2, 1) = a23;
+                matA1(2, 2) = a33;
+
+
+                std::vector<Eigen::Vector3d> nearCorners;
+                Eigen::Vector3d center(0, 0, 0);
+                for(int j = 0; j < 5; j++)
+                {
+                    Eigen::Vector3d tmp(laserCloudCornerFromMap->points[pointSearchInd[j]].x, 
+                                      laserCloudCornerFromMap->points[pointSearchInd[j]].y,
+                                      laserCloudCornerFromMap->points[pointSearchInd[j]].z);
+                    nearCorners.push_back(tmp);
+                    center = center + tmp;
+                }
+                center = center / 5.0;
+
+                Eigen::Matrix3d covMat = Eigen::Matrix3d::Zero();
+                for(int j = 0; j < 5; j++)
+                {
+                    Eigen::Matrix<double, 3, 1> tmpZeroMean = nearCorners[j] - center;
+                    covMat = covMat + tmpZeroMean * tmpZeroMean.transpose();
+                }
+
+                //std::cout << "matA1" << std::endl << matA1 << std::endl;
+                //std::cout << "covMat" << std::endl << covMat << std::endl;
 
                 //特征值分解
-                cv::eigen(matA1, matD1, matV1);
+                Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(matA1);
 
-                if (matD1.at<float>(0, 0) > 3 * matD1.at<float>(0, 1)) {//如果最大的特征值大于第二大的特征值三倍以上
-
+                // if is indeed line feature
+                // note Eigen library sort eigenvalues in increasing order
+                if (saes.eigenvalues()[2] > 3 * saes.eigenvalues()[1]) {//如果最大的特征值大于第二大的特征值三倍以上
+                  /*
                   float x0 = pointSel.x;
                   float y0 = pointSel.y;
                   float z0 = pointSel.z;
-                  float x1 = cx + 0.1 * matV1.at<float>(0, 0);
-                  float y1 = cy + 0.1 * matV1.at<float>(0, 1);
-                  float z1 = cz + 0.1 * matV1.at<float>(0, 2);
-                  float x2 = cx - 0.1 * matV1.at<float>(0, 0);
-                  float y2 = cy - 0.1 * matV1.at<float>(0, 1);
-                  float z2 = cz - 0.1 * matV1.at<float>(0, 2);
+                  // the first column of matV1 is line direction with norm 1
+                  // here A(x1, y1, z1) and B(x2, y2, z2) are two points sampled from fitted line
+                  Eigen::Vector3d unit_direction = saes.eigenvectors().col(2);
+                  Eigen::Vector3d point_on_line(cx, cy, cz);
 
-                  float a012 = sqrt(((x0 - x1)*(y0 - y2) - (x0 - x2)*(y0 - y1))
-                             * ((x0 - x1)*(y0 - y2) - (x0 - x2)*(y0 - y1)) 
-                             + ((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1))
-                             * ((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1)) 
-                             + ((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1))
-                             * ((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1)));
+                  Eigen::Vector3d curr_point(pointOri.x, pointOri.y, pointOri.z);
+                  LidarLineFactor *lidar_line_factor = new LidarLineFactor(curr_point, unit_direction, point_on_line);
+                  problem.AddResidualBlock(lidar_line_factor, loss_function, parameters, parameters+4);
+                  */
 
-                  float l12 = sqrt((x1 - x2)*(x1 - x2) + (y1 - y2)*(y1 - y2) + (z1 - z2)*(z1 - z2));
 
-                  float la = ((y1 - y2)*((x0 - x1)*(y0 - y2) - (x0 - x2)*(y0 - y1)) 
-                           + (z1 - z2)*((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1))) / a012 / l12;
+                  Eigen::Vector3d curr_point(pointOri.x, pointOri.y, pointOri.z);
+                  Eigen::Vector3d unit_direction = saes.eigenvectors().col(2);
+                  Eigen::Vector3d point_on_line(cx, cy, cz);
 
-                  float lb = -((x1 - x2)*((x0 - x1)*(y0 - y2) - (x0 - x2)*(y0 - y1)) 
-                           - (z1 - z2)*((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1))) / a012 / l12;
+                  Eigen::Vector3d point_a, point_b;
+                  point_a = 0.1 * unit_direction + point_on_line;
+                  point_b = -0.1 * unit_direction + point_on_line;
+                  
+                  ceres::CostFunction* cost_function = LidarEdgeFactor::Create(curr_point, point_a, point_b, 1.0);
+                  problem.AddResidualBlock(cost_function, loss_function, parameters, parameters+4);
+                  corner_num++;
+                  if(1)
+                  {
+                      std::cout << "point is " << curr_point[0] << ", " << curr_point[1] << ", " << curr_point[2] << ", and point_a is " 
+                             << point_a[0] << ", " << point_a[1] << ", " << point_a[2] << ", and point_b is " 
+                             << point_b[0] << ", " << point_b[1] << ", " << point_b[2] << '\n';
+                     double **para = new double *[2];
+                     para[0] = parameters;
+                     para[1] = parameters+4;
+                     double *res = new double[3];
+                     double **jaco = new double *[2];
+                     jaco[0] = new double[3 * 4];
+                     jaco[1] = new double[3 * 3];
+                     cost_function->Evaluate(para, res, jaco);
+                     printf("error %f %f %f \n", res[0], res[1], res[2]); 
+                     std::cout << Eigen::Map<Eigen::Matrix<double, 3, 4, Eigen::RowMajor>>(jaco[0]) << std::endl;
+                     std::cout << Eigen::Map<Eigen::Matrix<double, 3, 3, Eigen::RowMajor>>(jaco[1]) << std::endl;
 
-                  float lc = -((x1 - x2)*((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1)) 
-                           + (y1 - y2)*((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1))) / a012 / l12;
-
-                  float ld2 = a012 / l12;
-
-                  //unused
-                  pointProj = pointSel;
-                  pointProj.x -= la * ld2;
-                  pointProj.y -= lb * ld2;
-                  pointProj.z -= lc * ld2;
-
-                  //权重系数计算
-                  float s = 1 - 0.9 * fabs(ld2);
-
-                  coeff.x = s * la;
-                  coeff.y = s * lb;
-                  coeff.z = s * lc;
-                  coeff.intensity = s * ld2;
-
-                  if (s > 0.1) {//距离足够小才使用
-                    laserCloudOri->push_back(pointOri);
-                    coeffSel->push_back(coeff);
+                     Eigen::Quaterniond q{parameters[3], parameters[0], parameters[1], parameters[2]};
+                     Eigen::Vector3d t{parameters[4], parameters[5], parameters[6]};
+                     Eigen::Vector3d t_cur;
+                     t_cur = q * curr_point + t;
+                     Eigen::Vector3d e;
+                     e = ((t_cur - point_a).cross((t_cur - point_b))) / (point_a - point_b).norm();
+                     printf("error my %f %f %f\n", e.x(), e.y(), e.z());
                   }
+                  
                 }
               }
             }
-
+        	}
+        	
+            int surf_num = 0; 
+            if(0)
+            {
             for (int i = 0; i < laserCloudSurfStackNum; i++) {
               pointOri = laserCloudSurfStack->points[i];
-              pointAssociateToMap(&pointOri, &pointSel); 
+              pointAssociateToMap(&pointOri, &pointSel);
               kdtreeSurfFromMap->nearestKSearch(pointSel, 5, pointSearchInd, pointSearchSqDis);
 
+              Eigen::Matrix<double, 5, 3> matA0;
+              Eigen::Matrix<double, 5, 1> matB0 = -1 * Eigen::Matrix<double, 5, 1>::Ones();
               if (pointSearchSqDis[4] < 1.0) {
                 //构建五个最近点的坐标矩阵
                 for (int j = 0; j < 5; j++) {
-                  matA0.at<float>(j, 0) = laserCloudSurfFromMap->points[pointSearchInd[j]].x;
-                  matA0.at<float>(j, 1) = laserCloudSurfFromMap->points[pointSearchInd[j]].y;
-                  matA0.at<float>(j, 2) = laserCloudSurfFromMap->points[pointSearchInd[j]].z;
+                  matA0(j, 0) = laserCloudSurfFromMap->points[pointSearchInd[j]].x;
+                  matA0(j, 1) = laserCloudSurfFromMap->points[pointSearchInd[j]].y;
+                  matA0(j, 2) = laserCloudSurfFromMap->points[pointSearchInd[j]].z;
                 }
-                //求解matA0*matX0=matB0
-                cv::solve(matA0, matB0, matX0, cv::DECOMP_QR);
 
-                float pa = matX0.at<float>(0, 0);
-                float pb = matX0.at<float>(1, 0);
-                float pc = matX0.at<float>(2, 0);
-                float pd = 1;
- 
-                float ps = sqrt(pa * pa + pb * pb + pc * pc);
-                pa /= ps;
-                pb /= ps;
-                pc /= ps;
-                pd /= ps;
+                //求解matA0*matX0=matB0
+                // find the norm of plane
+                Eigen::Vector3d norm = matA0.colPivHouseholderQr().solve(matB0);
+                double negative_OA_dot_norm = 1 / norm.norm();
+                norm.normalize();
+
+                // Here n(pa, pb, pc) is unit norm of plane
 
                 bool planeValid = true;
                 for (int j = 0; j < 5; j++) {
-                  if (fabs(pa * laserCloudSurfFromMap->points[pointSearchInd[j]].x +
-                      pb * laserCloudSurfFromMap->points[pointSearchInd[j]].y +
-                      pc * laserCloudSurfFromMap->points[pointSearchInd[j]].z + pd) > 0.2) {
+                  // if OX * n > 0.2, then plane is not fit well
+                  if (fabs(norm(0) * laserCloudSurfFromMap->points[pointSearchInd[j]].x +
+                      norm(1) * laserCloudSurfFromMap->points[pointSearchInd[j]].y +
+                      norm(2) * laserCloudSurfFromMap->points[pointSearchInd[j]].z + negative_OA_dot_norm) > 0.2) {
                     planeValid = false;
                     break;
                   }
                 }
 
-                if (planeValid) {
-                  float pd2 = pa * pointSel.x + pb * pointSel.y + pc * pointSel.z + pd;
+                if (planeValid) 
+                {
+                  Eigen::Vector3d curr_point(pointOri.x, pointOri.y, pointOri.z);
 
-                  //unused
-                  pointProj = pointSel;
-                  pointProj.x -= pa * pd2;
-                  pointProj.y -= pb * pd2;
-                  pointProj.z -= pc * pd2;
+                  /*
+                  LidarPlaneFactor *lidar_plane_factor = new LidarPlaneFactor(curr_point, norm, negative_OA_dot_norm);
+                  problem.AddResidualBlock(lidar_plane_factor, loss_function, parameters, parameters+4);
+                  */
+                  
+                  ceres::CostFunction* cost_function = LidarPlaneNormFactor::Create(curr_point, norm, negative_OA_dot_norm);
+                  problem.AddResidualBlock(cost_function, loss_function, parameters, parameters+4);
+                  surf_num++;
+                  if(1)
+                  {
+                      std::cout << "point is " << curr_point[0] << ", " << curr_point[1] << ", " << curr_point[2] << 
+                                   " plane norm is " << norm.x() << ", " << norm.y() << ", " << norm.z() <<
+                                   " scalar is " << negative_OA_dot_norm << std::endl;
 
-                  float s = 1 - 0.9 * fabs(pd2) / sqrt(sqrt(pointSel.x * pointSel.x
-                          + pointSel.y * pointSel.y + pointSel.z * pointSel.z));
+                      double **para = new double *[2];
+                      para[0] = parameters;
+                      para[1] = parameters+4;
+                      double *res = new double[1];
+                      double **jaco = new double *[2];
+                      jaco[0] = new double[1 * 4];
+                      jaco[1] = new double[1 * 3];
+                      cost_function->Evaluate(para, res, jaco);
+                      printf("plane error %f \n", res[0]); 
+                      std::cout << Eigen::Map<Eigen::Matrix<double, 1, 4, Eigen::RowMajor>>(jaco[0]) << std::endl;
+                      std::cout << Eigen::Map<Eigen::Matrix<double, 1, 3, Eigen::RowMajor>>(jaco[1]) << std::endl;
 
-                  coeff.x = s * pa;
-                  coeff.y = s * pb;
-                  coeff.z = s * pc;
-                  coeff.intensity = s * pd2;
-
-                  if (s > 0.1) {
-                    laserCloudOri->push_back(pointOri);
-                    coeffSel->push_back(coeff);
+                      Eigen::Quaterniond q{parameters[3], parameters[0], parameters[1], parameters[2]};
+                      Eigen::Vector3d t{parameters[4], parameters[5], parameters[6]};
+                      Eigen::Vector3d t_cur;
+                      t_cur = q * curr_point + t;
+                      double e;
+                      e = norm.dot(t_cur) + negative_OA_dot_norm;
+                      printf("plane error my %f \n", e);
                   }
+                  
                 }
               }
             }
+        	}
+            {
+                printf("\n \n");
+                printf("init guess q %f %f %f %f t %f %f %f \n",parameters[3], parameters[0], parameters[1], parameters[2],
+                                                                parameters[4], parameters[5], parameters[6]);
+                Eigen::Matrix3d R_gt;
+                Eigen::Vector3d t_gt;
+                getGTPose(timeLaserOdometry, R_gt, t_gt);
+                Eigen::Quaterniond q_gt(R_gt);
 
-            float srx = sin(transformTobeMapped[0]);
-            float crx = cos(transformTobeMapped[0]);
-            float sry = sin(transformTobeMapped[1]);
-            float cry = cos(transformTobeMapped[1]);
-            float srz = sin(transformTobeMapped[2]);
-            float crz = cos(transformTobeMapped[2]);
-
-            int laserCloudSelNum = laserCloudOri->points.size();
-            if (laserCloudSelNum < 50) {//如果特征点太少
-              continue;
+                printf("gt q %f %f %f %f t %f %f %f \n",q_gt.w(), q_gt.x(), q_gt.y(), q_gt.z(), 
+                                                        t_gt.x(), t_gt.y(), t_gt.z());
             }
 
-            cv::Mat matA(laserCloudSelNum, 6, CV_32F, cv::Scalar::all(0));
-            cv::Mat matAt(6, laserCloudSelNum, CV_32F, cv::Scalar::all(0));
-            cv::Mat matAtA(6, 6, CV_32F, cv::Scalar::all(0));
-            cv::Mat matB(laserCloudSelNum, 1, CV_32F, cv::Scalar::all(0));
-            cv::Mat matAtB(6, 1, CV_32F, cv::Scalar::all(0));
-            cv::Mat matX(6, 1, CV_32F, cv::Scalar::all(0));
-            for (int i = 0; i < laserCloudSelNum; i++) {
-              pointOri = laserCloudOri->points[i];
-              coeff = coeffSel->points[i];
+            ceres::Solver::Options options;
+            options.linear_solver_type = ceres::DENSE_QR;
+            options.max_num_iterations = 5;
+            options.minimizer_progress_to_stdout = true;
+            options.check_gradients = false;
+            options.gradient_check_relative_precision = 1e-4;
+            ceres::Solver::Summary summary;
+            ceres::Solve(options, &problem, &summary);
 
-              float arx = (crx*sry*srz*pointOri.x + crx*crz*sry*pointOri.y - srx*sry*pointOri.z) * coeff.x
-                        + (-srx*srz*pointOri.x - crz*srx*pointOri.y - crx*pointOri.z) * coeff.y
-                        + (crx*cry*srz*pointOri.x + crx*cry*crz*pointOri.y - cry*srx*pointOri.z) * coeff.z;
+            printf("time %f \n", timeLaserOdometry);
+            printf("corner factor num %d surf factor num %d\n", corner_num, surf_num);
+            printf("result q %f %f %f %f result t %f %f %f\n", parameters[3], parameters[0], parameters[1], parameters[2],
+                                                                parameters[4], parameters[5], parameters[6]);
+            {
+            	Eigen::Matrix3d R_gt;
+            	Eigen::Vector3d t_gt;
+            	getGTPose(timeLaserOdometry, R_gt, t_gt);
+            	Eigen::Quaterniond q_gt(R_gt);
 
-              float ary = ((cry*srx*srz - crz*sry)*pointOri.x 
-                        + (sry*srz + cry*crz*srx)*pointOri.y + crx*cry*pointOri.z) * coeff.x
-                        + ((-cry*crz - srx*sry*srz)*pointOri.x 
-                        + (cry*srz - crz*srx*sry)*pointOri.y - crx*sry*pointOri.z) * coeff.z;
-
-              float arz = ((crz*srx*sry - cry*srz)*pointOri.x + (-cry*crz-srx*sry*srz)*pointOri.y)*coeff.x
-                        + (crx*crz*pointOri.x - crx*srz*pointOri.y) * coeff.y
-                        + ((sry*srz + cry*crz*srx)*pointOri.x + (crz*sry-cry*srx*srz)*pointOri.y)*coeff.z;
-
-              matA.at<float>(i, 0) = arx;
-              matA.at<float>(i, 1) = ary;
-              matA.at<float>(i, 2) = arz;
-              matA.at<float>(i, 3) = coeff.x;
-              matA.at<float>(i, 4) = coeff.y;
-              matA.at<float>(i, 5) = coeff.z;
-              matB.at<float>(i, 0) = -coeff.intensity;
-            }
-            cv::transpose(matA, matAt);
-            matAtA = matAt * matA;
-            matAtB = matAt * matB;
-            cv::solve(matAtA, matAtB, matX, cv::DECOMP_QR);
-
-            //退化场景判断与处理
-            if (iterCount == 0) {
-              cv::Mat matE(1, 6, CV_32F, cv::Scalar::all(0));
-              cv::Mat matV(6, 6, CV_32F, cv::Scalar::all(0));
-              cv::Mat matV2(6, 6, CV_32F, cv::Scalar::all(0));
-
-              cv::eigen(matAtA, matE, matV);
-              matV.copyTo(matV2);
-
-              isDegenerate = false;
-              float eignThre[6] = {100, 100, 100, 100, 100, 100};
-              for (int i = 5; i >= 0; i--) {
-                if (matE.at<float>(0, i) < eignThre[i]) {
-                  for (int j = 0; j < 6; j++) {
-                    matV2.at<float>(i, j) = 0;
-                  }
-                  isDegenerate = true;
-                } else {
-                  break;
-                }
-              }
-              matP = matV.inv() * matV2;
+            	printf("gt q %f %f %f %f t %f %f %f \n",q_gt.w(), q_gt.x(), q_gt.y(), q_gt.z(), 
+            	                                        t_gt.x(), t_gt.y(), t_gt.z());
             }
 
-            if (isDegenerate) {
-              cv::Mat matX2(6, 1, CV_32F, cv::Scalar::all(0));
-              matX.copyTo(matX2);
-              matX = matP * matX2;
-            }
-
-            //积累每次的调整量
-            transformTobeMapped[0] += matX.at<float>(0, 0);
-            transformTobeMapped[1] += matX.at<float>(1, 0);
-            transformTobeMapped[2] += matX.at<float>(2, 0);
-            transformTobeMapped[3] += matX.at<float>(3, 0);
-            transformTobeMapped[4] += matX.at<float>(4, 0);
-            transformTobeMapped[5] += matX.at<float>(5, 0);
-
-            float deltaR = sqrt(
-                                pow(rad2deg(matX.at<float>(0, 0)), 2) +
-                                pow(rad2deg(matX.at<float>(1, 0)), 2) +
-                                pow(rad2deg(matX.at<float>(2, 0)), 2));
-            float deltaT = sqrt(
-                                pow(matX.at<float>(3, 0) * 100, 2) +
-                                pow(matX.at<float>(4, 0) * 100, 2) +
-                                pow(matX.at<float>(5, 0) * 100, 2));
-
-            //旋转平移量足够小就停止迭代
-            if (deltaR < 0.05 && deltaT < 0.05) {
-              break;
-            }
+            printf("\n");
           }
 
           //迭代结束更新相关的转移矩阵
           transformUpdate();
+        }
+        else
+        {
+            printf("time %f Map corner and surf num are not enough\n", timeLaserOdometry);
         }
 
         //将corner points按距离（比例尺缩小）归入相应的立方体
@@ -1193,40 +1059,28 @@ int main(int argc, char** argv)
         laserCloudFullRes3.header.frame_id = "/camera_init";
         pubLaserCloudFullRes.publish(laserCloudFullRes3);
 
-        geometry_msgs::Quaternion geoQuat = tf::createQuaternionMsgFromRollPitchYaw
-                                  (transformAftMapped[2], -transformAftMapped[0], -transformAftMapped[1]);
-
         odomAftMapped.header.stamp = ros::Time().fromSec(timeLaserOdometry);
-        odomAftMapped.pose.pose.orientation.x = -geoQuat.y;
-        odomAftMapped.pose.pose.orientation.y = -geoQuat.z;
-        odomAftMapped.pose.pose.orientation.z = geoQuat.x;
-        odomAftMapped.pose.pose.orientation.w = geoQuat.w;
-        odomAftMapped.pose.pose.position.x = transformAftMapped[3];
-        odomAftMapped.pose.pose.position.y = transformAftMapped[4];
-        odomAftMapped.pose.pose.position.z = transformAftMapped[5];
-        //扭转量
-        odomAftMapped.twist.twist.angular.x = transformBefMapped[0];
-        odomAftMapped.twist.twist.angular.y = transformBefMapped[1];
-        odomAftMapped.twist.twist.angular.z = transformBefMapped[2];
-        odomAftMapped.twist.twist.linear.x = transformBefMapped[3];
-        odomAftMapped.twist.twist.linear.y = transformBefMapped[4];
-        odomAftMapped.twist.twist.linear.z = transformBefMapped[5];
+        odomAftMapped.pose.pose.orientation.x = q_w_curr.x();
+        odomAftMapped.pose.pose.orientation.y = q_w_curr.y();
+        odomAftMapped.pose.pose.orientation.z = q_w_curr.z();
+        odomAftMapped.pose.pose.orientation.w = q_w_curr.w();
+        odomAftMapped.pose.pose.position.x    = t_w_curr.x();
+        odomAftMapped.pose.pose.position.y    = t_w_curr.y();
+        odomAftMapped.pose.pose.position.z    = t_w_curr.z();
         pubOdomAftMapped.publish(odomAftMapped);
 
-        geometry_msgs::PoseStamped laserPose;
-        laserPose.header = odomAftMapped.header;
-        laserPose.pose = odomAftMapped.pose.pose;
-        laserPath.header.stamp = odomAftMapped.header.stamp;
-        laserPath.poses.push_back(laserPose);
-        pubLaserPath.publish(laserPath);
+        geometry_msgs::PoseStamped laserAfterMappedPose;
+        laserAfterMappedPose.header = odomAftMapped.header;
+        laserAfterMappedPose.pose = odomAftMapped.pose.pose;
+        laserAfterMappedPath.header.stamp = odomAftMapped.header.stamp;
+        laserAfterMappedPath.poses.push_back(laserAfterMappedPose);
+        pubLaserAfterMappedPath.publish(laserAfterMappedPath);
 
         //广播坐标系旋转平移参量
         aftMappedTrans.stamp_ = ros::Time().fromSec(timeLaserOdometry);
-        aftMappedTrans.setRotation(tf::Quaternion(-geoQuat.y, -geoQuat.z, geoQuat.x, geoQuat.w));
-        aftMappedTrans.setOrigin(tf::Vector3(transformAftMapped[3], 
-                                             transformAftMapped[4], transformAftMapped[5]));
+        aftMappedTrans.setRotation(tf::Quaternion(q_w_curr.x(), q_w_curr.y(), q_w_curr.z(), q_w_curr.w()));
+        aftMappedTrans.setOrigin(tf::Vector3(t_w_curr.x(), t_w_curr.y(), t_w_curr.z()));
         tfBroadcaster.sendTransform(aftMappedTrans);
-
       }
     }
 
@@ -1237,3 +1091,6 @@ int main(int argc, char** argv)
   return 0;
 }
 
+// to do list
+// x z change
+// check 1 init & gt  2 transform to local and world

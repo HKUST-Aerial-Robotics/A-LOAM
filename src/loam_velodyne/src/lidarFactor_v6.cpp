@@ -15,7 +15,7 @@ struct LidarEdgeFactor
                   : curr_point(curr_point_), last_point_a(last_point_a_), last_point_b(last_point_b_), s(s_){}
 
     template <typename T>
-    bool operator()(const T* const q, const T* t, T* residual) const
+    bool operator()(const T* q, const T* t, T* residual) const
     {
 
         Eigen::Matrix<T, 3, 1> cp{T(curr_point.x()), T(curr_point.y()), T(curr_point.z())};
@@ -68,7 +68,7 @@ struct LidarPlaneFactor
     }
 
     template <typename T>
-    bool operator()(const T* const q, const T* t, T* residual) const
+    bool operator()(const T* q, const T* t, T* residual) const
     {
 
         Eigen::Matrix<T, 3, 1> cp{T(curr_point.x()), T(curr_point.y()), T(curr_point.z())};
@@ -105,234 +105,39 @@ struct LidarPlaneFactor
     double s;
 };
 
-class LidarFactor : public ceres::SizedCostFunction<1, 4, 3>
+
+struct LidarPlaneNormFactor 
 {
-    public:
-        LidarFactor() = delete;
-        LidarFactor(Eigen::Vector3d curr_point_, Eigen::Vector3d last_point_a_,
-                    Eigen::Vector3d last_point_b_, double distort_ratio_) : curr_point(curr_point_), last_point_a(last_point_a_),
-                                                                            last_point_b(last_point_b_), distort_ratio(distort_ratio_)
-        {
-            is_edge = true;
-            computeDerivedItems();
-        }
 
-        LidarFactor(Eigen::Vector3d curr_point_, Eigen::Vector3d last_point_a_,
-                    Eigen::Vector3d last_point_b_, Eigen::Vector3d last_point_c_, double distort_ratio_)
-                        : curr_point(curr_point_), last_point_a(last_point_a_), last_point_b(last_point_b_),
-                          last_point_c(last_point_c_), distort_ratio(distort_ratio_)
-        {
-            is_edge = false;
-            computeDerivedItems();
-        }
+    LidarPlaneNormFactor (Eigen::Vector3d curr_point_, Eigen::Vector3d plane_unit_norm_,
+                     double negative_OA_dot_norm_) : curr_point(curr_point_), plane_unit_norm(plane_unit_norm_),
+                    negative_OA_dot_norm(negative_OA_dot_norm_){}
 
-        void computeDerivedItems()
-        {
-            if (is_edge)
-            {
-                AB = last_point_b - last_point_a;
-                norm_AB = AB.norm();
-            }
-            else
-            {
-                Eigen::Vector3d AB_ = last_point_b - last_point_a;
-                Eigen::Vector3d AC_ = last_point_c - last_point_a;
-                normalized_ABxAC = AB_.cross(AC_);
-                normalized_ABxAC.normalize();
-            }
-        }
 
-        Eigen::Matrix<double, 3, 4> QuaternionDerivation(const Eigen::Quaterniond &q0, const Eigen::Vector3d &point) const
-        {
-            const double *q = q0.coeffs().data();
-            Eigen::Matrix<double, 3, 4> result;
-            result(0, 0) = 2*q[1]*point[1] + 2*q[2]*point[2];
-            result(0, 1) = -2*2*q[1]*point[0] + 2*q[0]*point[1] + 2*q[3]*point[2];
-            result(0, 2) = -2*2*q[2]*point[0] - 2*q[3]*point[1] + 2*q[0]*point[2];
-            result(0, 3) = -2*q[2]*point[1] + 2*q[1]*point[2];
-            result(1, 0) = 2*q[1]*point[0] - 2*2*q[0]*point[1] - 2*q[3]*point[2];
-            result(1, 1) = 2*q[0]*point[0] + 2*q[2]*point[2];
-            result(1, 2) = 2*q[3]*point[0] - 2*2*q[2]*point[1] + 2*q[1]*point[2];
-            result(1, 3) = 2*q[2]*point[0] - 2*q[0]*point[2];
-            result(2, 0) = 2*q[2]*point[0] + 2*q[3]*point[1] - 2*2*q[0]*point[2];
-            result(2, 1) = -2*q[3]*point[0] + 2*q[2]*point[1] - 2*2*q[1]*point[2];
-            result(2, 2) = 2*q[0]*point[0] + 2*q[1]*point[1];
-            result(2, 3) = -2*q[1]*point[0] + 2*q[0]*point[1];
+    template <typename T>
+    bool operator()(const T* q, const T* t, T* residual) const
+    {
+        Eigen::Quaternion<T> q_w_curr{q[3], q[0], q[1], q[2]};
+        Eigen::Matrix<T, 3, 1> t_w_curr{t[0], t[1], t[2]};
+        Eigen::Matrix<T, 3, 1> cp{T(curr_point.x()), T(curr_point.y()), T(curr_point.z())};
+        Eigen::Matrix<T, 3, 1> point_w;
+        point_w = q_w_curr * cp + t_w_curr;
 
-            return result;
-        }
+        Eigen::Matrix<T, 3, 1> norm(T(plane_unit_norm.x()), T(plane_unit_norm.y()), T(plane_unit_norm.z()));
+        residual[0] = norm.dot(point_w) + T(negative_OA_dot_norm);
+        return true;
+    }
 
-        Eigen::Matrix3d skewSymmetic(const Eigen::Vector3d &v) const
-        {
-            Eigen::Matrix3d result;
-            result << 0, -v[2], v[1], v[2], 0, -v[0], -v[1], v[0], 0;
-            return result;
-        }
 
-        void QuaternionSlerpWithIdentity(const Eigen::Quaterniond &q, const double s, Eigen::Quaterniond &result_q, double *jacobian) const
-        {
-            const double d = Eigen::Quaterniond::Identity().dot(q);
-            const double absD = std::abs(d);
-            const double one = 1 - 1e-15;
+    static ceres::CostFunction* Create(const Eigen::Vector3d curr_point_, const Eigen::Vector3d plane_unit_norm_,
+                                       const double negative_OA_dot_norm_) 
+    {
+      return (new ceres::AutoDiffCostFunction<
+              LidarPlaneNormFactor, 1, 4, 3>(
+                new LidarPlaneNormFactor(curr_point_, plane_unit_norm_, negative_OA_dot_norm_)));
+    }
 
-            double scale0, scale1, theta, sinTheta;
-
-            if (absD >= one)
-            {
-                scale0 = 1.0 - s;
-                scale1 = s;
-            }
-            else
-            {
-                theta = std::acos(absD);
-                sinTheta = std::sin(theta);
-                scale0 = std::sin((1.0 - s) * theta) / sinTheta;
-                scale1 = std::sin(s * theta) / sinTheta;
-            }
-            
-            if (d < 0)
-                scale1 = -scale1;
-            
-            result_q.x() = scale1 * q.x();
-            result_q.y() = scale1 * q.y();
-            result_q.z() = scale1 * q.z();
-            result_q.w() = scale1 * q.w() + scale0;
-
-            if (jacobian)
-            {
-                Eigen::Map<Eigen::Matrix4d> jaco(jacobian);
-                double scale0_2_q3 = 0, scale1_2_q3 = 0;
-                if (absD >= one)
-                {
-                    double tmp_theta = std::acos(one);
-                    scale0_2_q3 = ((1-s)*std::cos((1-s)*tmp_theta)*std::sin(tmp_theta) - std::sin((1-s)*tmp_theta)*std::cos(tmp_theta)) / 
-                                  (std::sin(tmp_theta)*std::sin(tmp_theta)) * -1.0 / std::sqrt(1 - one*one);
-                    scale1_2_q3 = (s*std::cos(s*tmp_theta)*std::sin(tmp_theta) - std::sin(s*tmp_theta)*std::cos(tmp_theta)) /
-                                  (std::sin(tmp_theta)*std::sin(tmp_theta)) * -1.0 / std::sqrt(1 - one*one);
-                }
-                else
-                {
-                    scale0_2_q3 = ((1-s)*std::cos((1-s)*theta)*std::sin(theta) - std::sin((1-s)*theta)*std::cos(theta)) / 
-                                  (std::sin(theta)*std::sin(theta)) * -1.0 / std::sqrt(1 - absD*absD);
-                    scale1_2_q3 = (s*std::cos(s*theta)*std::sin(theta) - std::sin(s*theta)*std::cos(theta)) /
-                                  (std::sin(theta)*std::sin(theta)) * -1.0 / std::sqrt(1 - absD*absD);
-                }
-
-                if (d < 0)
-                {
-                    scale0_2_q3 *= -1;
-                    scale1_2_q3 *= -1;
-                }
-                jaco = scale1 * Eigen::Matrix4d::Identity();
-                jaco(0, 3) = scale1_2_q3 * q.x();
-                jaco(1, 3) = scale1_2_q3 * q.y();
-                jaco(2, 3) = scale1_2_q3 * q.z();
-                jaco(3, 3) += scale1_2_q3 * q.w() + scale0_2_q3;
-            }
-        }
-
-        bool Evaluate(double const *const *parameters, double *residuals, double **jacobians) const
-        {
-            Eigen::Map<const Eigen::Quaterniond> q_curr_last(parameters[0]);
-            Eigen::Map<const Eigen::Vector3d>    t_curr_last(parameters[1]);
-
-            double *jaco_slerp_array = new double[16];
-            Eigen::Map<Eigen::Matrix4d> jaco_slerp(jaco_slerp_array);
-            Eigen::Quaterniond q_point_last;
-
-            if (jacobians)
-                QuaternionSlerpWithIdentity(q_curr_last, distort_ratio, q_point_last, jaco_slerp_array);
-            else
-                QuaternionSlerpWithIdentity(q_curr_last, distort_ratio, q_point_last, NULL);
-
-            Eigen::Vector3d t_point_last = distort_ratio * t_curr_last;
-            Eigen::Vector3d point_start = q_point_last.inverse() * (curr_point - t_point_last);
-
-            if (is_edge)
-            {
-                // edge feature
-                Eigen::Vector3d OA = last_point_a - point_start;
-                Eigen::Vector3d OB = last_point_b - point_start;
-                Eigen::Vector3d OAxOB = OA.cross(OB);
-                double norm_OAxOB = OAxOB.norm();
-                residuals[0] = norm_OAxOB / norm_AB;
-
-                if (jacobians)
-                {
-                    Eigen::Matrix3d R_last_curr = q_curr_last.toRotationMatrix().transpose();
-                    Eigen::Matrix3d R_point_last = q_point_last.toRotationMatrix();
-                    Eigen::Matrix<double, 4, 4> tmp_m = -Eigen::Matrix<double, 4, 4>::Identity();
-                    tmp_m(3, 3) = 1;
-                    Eigen::Matrix3d jaco_t2t = distort_ratio * Eigen::Matrix3d::Identity();
-                    Eigen::Matrix<double, 3, 4> jaco_t2q = Eigen::Matrix<double, 3, 4>::Zero();
-                    Eigen::Matrix<double, 3, 4> jaco_p2q = QuaternionDerivation(q_point_last.conjugate(), curr_point-t_point_last) * tmp_m * jaco_slerp
-                                                         - R_point_last.transpose() * jaco_t2q;
-                    Eigen::Matrix3d jaco_p2t = -R_point_last.transpose() * jaco_t2t;
-                    Eigen::Matrix<double, 3, 4> jaco_OAxOB2q = -skewSymmetic(last_point_a) * jaco_p2q + skewSymmetic(last_point_b) * jaco_p2q;
-                    Eigen::Matrix3d jaco_OAxOB2t = -skewSymmetic(last_point_a) * jaco_p2t + skewSymmetic(last_point_b) * jaco_p2t;
-                    double norm_OAxOB = OAxOB.norm();
-                    Eigen::RowVector3d jaco_r2OAxOB = OAxOB.transpose() / norm_OAxOB / norm_AB;
-                    if (jacobians[0])
-                    {
-                        Eigen::Map<Eigen::RowVector4d> jaco_q(jacobians[0]);
-                        jaco_q = jaco_r2OAxOB * jaco_OAxOB2q;
-                    }
-                    if (jacobians[1])
-                    {
-                        Eigen::Map<Eigen::RowVector3d> jaco_t(jacobians[1]);
-                        jaco_t = jaco_r2OAxOB * jaco_OAxOB2t;
-                    }
-                }
-            }
-            else
-            {
-                // plane feature
-                Eigen::Vector3d OA = last_point_a - point_start;
-                double normalized_ABxAC_dot_OA = normalized_ABxAC.dot(OA);
-                residuals[0] = std::abs(normalized_ABxAC_dot_OA);
-
-                if (jacobians)
-                {
-                    // TODO: repeat code as above, should be optimized
-                    Eigen::Matrix3d R_last_curr = q_curr_last.toRotationMatrix().transpose();
-                    Eigen::Matrix3d R_point_last = q_point_last.toRotationMatrix();
-                    Eigen::Matrix<double, 4, 4> tmp_m = -Eigen::Matrix<double, 4, 4>::Identity();
-                    tmp_m(3, 3) = 1;
-                     Eigen::Matrix3d jaco_t2t = distort_ratio * Eigen::Matrix3d::Identity();
-                    Eigen::Matrix<double, 3, 4> jaco_t2q = Eigen::Matrix<double, 3, 4>::Zero();
-                    Eigen::Matrix<double, 3, 4> jaco_p2q = QuaternionDerivation(q_point_last.conjugate(), curr_point-t_point_last) * tmp_m * jaco_slerp
-                                                         - R_point_last.transpose() * jaco_t2q;
-                    Eigen::Matrix3d jaco_p2t = -R_point_last.transpose() * jaco_t2t;
-
-                    if (jacobians[0])
-                    {
-                        Eigen::Map<Eigen::RowVector4d> jaco_r2q(jacobians[0]);
-                        jaco_r2q = -normalized_ABxAC.transpose() * jaco_p2q;
-                        if (normalized_ABxAC_dot_OA < 0)
-                            jaco_r2q *= -1;
-                    }
-                    if (jacobians[1])
-                    {
-                        Eigen::Map<Eigen::RowVector3d> jaco_r2t(jacobians[1]);
-                        jaco_r2t = -normalized_ABxAC.transpose() * jaco_p2t;
-                        if (normalized_ABxAC_dot_OA < 0)
-                            jaco_r2t *= -1;
-                    }
-                }
-            }
-
-            return true;
-        }
-
-        Eigen::Vector3d curr_point;
-        double distort_ratio;
-        bool   is_edge;
-
-        // derived items
-        Eigen::Vector3d last_point_a;
-        Eigen::Vector3d last_point_b;
-        Eigen::Vector3d last_point_c;
-        Eigen::Vector3d AB;
-        double norm_AB;
-        Eigen::Vector3d normalized_ABxAC;
+    Eigen::Vector3d curr_point;
+    Eigen::Vector3d plane_unit_norm;
+    double negative_OA_dot_norm;
 };
