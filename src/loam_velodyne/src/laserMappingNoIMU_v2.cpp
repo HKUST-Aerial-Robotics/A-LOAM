@@ -49,11 +49,11 @@ bool newLaserCloudFullRes = false;
 bool newLaserOdometry = false;
 
 int laserCloudCenWidth = 10;
-int laserCloudCenHeight = 5;
-int laserCloudCenDepth = 10;
+int laserCloudCenHeight = 10;
+int laserCloudCenDepth = 5;
 const int laserCloudWidth = 21;
-const int laserCloudHeight = 11;
-const int laserCloudDepth = 21;
+const int laserCloudHeight = 21;
+const int laserCloudDepth = 11;
 //点云方块集合最大数量
 const int laserCloudNum = laserCloudWidth * laserCloudHeight * laserCloudDepth;//4851
 
@@ -70,13 +70,8 @@ pcl::PointCloud<PointType>::Ptr laserCloudSurfLast(new pcl::PointCloud<PointType
 pcl::PointCloud<PointType>::Ptr laserCloudCornerStack(new pcl::PointCloud<PointType>());
 //存放当前收到的下采样之后的平面点(in the local frame)
 pcl::PointCloud<PointType>::Ptr laserCloudSurfStack(new pcl::PointCloud<PointType>());
-//存放当前收到的边沿点，作为下采样的数据源
-pcl::PointCloud<PointType>::Ptr laserCloudCornerStack2(new pcl::PointCloud<PointType>());
-//存放当前收到的平面点，作为下采样的数据源
-pcl::PointCloud<PointType>::Ptr laserCloudSurfStack2(new pcl::PointCloud<PointType>());
 //原始点云坐标
 pcl::PointCloud<PointType>::Ptr laserCloudOri(new pcl::PointCloud<PointType>());
-pcl::PointCloud<PointType>::Ptr coeffSel(new pcl::PointCloud<PointType>());
 //匹配使用的特征点（下采样之后的）
 pcl::PointCloud<PointType>::Ptr laserCloudSurround(new pcl::PointCloud<PointType>());
 //匹配使用的特征点（下采样之前的）
@@ -175,9 +170,26 @@ void getRelativeGTPose(double timestamp_curr, double timestamp_last, Eigen::Matr
 //基于匀速模型，根据上次微调的结果和odometry这次与上次计算的结果，猜测一个新的世界坐标系的转换矩阵transformTobeMapped
 void transformAssociateToMap()
 {
-  Eigen::Vector3d t_curr_last_tilde = q_w_curr_tilde.inverse() * (t_w_last_tilde - t_w_curr_tilde);
-  q_w_curr = q_w_last * q_w_last_tilde * q_w_curr_tilde;
-  t_w_curr = t_w_last - q_w_curr * t_curr_last_tilde;
+
+  Eigen::Matrix4d T_w_curr, T_w_last, T_w_last_tilde, T_w_curr_tilde;
+
+  T_w_last = Eigen::Matrix4d::Identity();
+  T_w_last.block<3,3>(0, 0) = q_w_last.toRotationMatrix();
+  T_w_last.block<3,1>(0, 3) = t_w_last;
+
+  T_w_last_tilde = Eigen::Matrix4d::Identity();
+  T_w_last_tilde.block<3, 3>(0, 0) = q_w_last_tilde.toRotationMatrix();
+  T_w_last_tilde.block<3, 1>(0, 3) = t_w_last_tilde;
+
+  T_w_curr_tilde = Eigen::Matrix4d::Identity();
+  T_w_curr_tilde.block<3, 3>(0, 0) = q_w_curr_tilde.toRotationMatrix();
+  T_w_curr_tilde.block<3, 1>(0, 3) = t_w_curr_tilde;
+
+  T_w_curr = T_w_last * T_w_last_tilde.inverse() * T_w_curr_tilde;
+
+  q_w_curr = T_w_curr.block<3, 3>(0, 0);
+  t_w_curr = T_w_curr.block<3, 1>(0, 3);
+
 }
 
 //记录odometry发送的转换矩阵与mapping之后的转换矩阵，下一帧点云会使用(有IMU的话会使用IMU进行补偿)
@@ -300,10 +312,8 @@ int main(int argc, char** argv)
   std::vector<int> pointSearchInd;
   std::vector<float> pointSearchSqDis;
 
-  PointType pointOri, pointSel, pointProj, coeff;
+  PointType pointOri, pointSel;
 
-  bool isDegenerate = false;
-  cv::Mat matP(6, 6, CV_32F, cv::Scalar::all(0));
 
   //创建VoxelGrid滤波器（体素栅格滤波器）
   pcl::VoxelGrid<PointType> downSizeFilterCorner;
@@ -341,34 +351,10 @@ int main(int argc, char** argv)
       newLaserOdometry = false;
 
       frameCount++;
-      //控制跳帧数，>=这里实际并没有跳帧，只取>或者增大stackFrameNum才能实现相应的跳帧处理
-      if (frameCount >= stackFrameNum) {
-        //获取世界坐标系转换矩阵
-        transformAssociateToMap();
-
-        //将最新接收到的平面点和边沿点进行旋转平移转换到世界坐标系下(这里和后面的逆转换应无必要)
-        int laserCloudCornerLastNum = laserCloudCornerLast->points.size();
-        for (int i = 0; i < laserCloudCornerLastNum; i++) {
-          pointAssociateToMap(&laserCloudCornerLast->points[i], &pointSel);
-          laserCloudCornerStack2->push_back(pointSel);
-        }
-
-        int laserCloudSurfLastNum = laserCloudSurfLast->points.size();
-        for (int i = 0; i < laserCloudSurfLastNum; i++) {
-          pointAssociateToMap(&laserCloudSurfLast->points[i], &pointSel);
-          laserCloudSurfStack2->push_back(pointSel);
-        }
-      }
 
       if (frameCount >= stackFrameNum) {
-        frameCount = 0;
 
-        PointType pointOnYAxis;
-        pointOnYAxis.x = 0.0;
-        pointOnYAxis.y = 10.0;
-        pointOnYAxis.z = 0.0;
-        //获取y方向上10米高位置的点在世界坐标系下的坐标
-        pointAssociateToMap(&pointOnYAxis, &pointOnYAxis);
+      	transformAssociateToMap();
 
         //立方体中点在世界坐标系下的（原点）位置
         //过半取一（以50米进行四舍五入的效果），由于数组下标只能为正数，而地图可能建立在原点前后，因此
@@ -382,7 +368,7 @@ int main(int argc, char** argv)
         if (t_w_curr.y() + 25.0 < 0) centerCubeJ--;
         if (t_w_curr.z() + 25.0 < 0) centerCubeK--;                          
 
-        //调整之后取值范围:3 < centerCubeI < 18， 3 < centerCubeJ < 8, 3 < centerCubeK < 18
+        //调整之后取值范围:3 < centerCubeI < 18， 3 < centerCubeJ < 18, 3 < centerCubeK < 18
         //如果处于下边界，表明地图向负方向延伸的可能性比较大，则循环移位，将数组中心点向上边界调整一个单位
         while (centerCubeI < 3) {
           for (int j = 0; j < laserCloudHeight; j++) {
@@ -555,6 +541,13 @@ int main(int argc, char** argv)
           laserCloudCenDepth--;
         }
 
+        PointType pointOnYAxis;
+        pointOnYAxis.x = 0.0;
+        pointOnYAxis.y = 0.0;
+        pointOnYAxis.z = 10.0;
+        //获取y方向上10米高位置的点在世界坐标系下的坐标
+        pointAssociateToMap(&pointOnYAxis, &pointOnYAxis);
+
         int laserCloudValidNum = 0;
         int laserCloudSurroundNum = 0;
         //在每一维附近5个cube(前2个，后2个，中间1个)里进行查找（前后250米范围内，总共500米范围），三个维度总共125个cube
@@ -633,34 +626,16 @@ int main(int argc, char** argv)
         int laserCloudCornerFromMapNum = laserCloudCornerFromMap->points.size();
         int laserCloudSurfFromMapNum = laserCloudSurfFromMap->points.size();
 
-        /***********************************************************************
-          此处将特征点转移回local坐标系，是为了voxel grid filter的下采样操作不越
-          界？好像不是！后面还会转移回世界坐标系，这里是前面的逆转换，和前面一样
-          应无必要，可直接对laserCloudCornerLast和laserCloudSurfLast进行下采样
-        ***********************************************************************/
-        // ????
-        int laserCloudCornerStackNum2 = laserCloudCornerStack2->points.size();
-        for (int i = 0; i < laserCloudCornerStackNum2; i++) {
-          pointAssociateTobeMapped(&laserCloudCornerStack2->points[i], &laserCloudCornerStack2->points[i]);
-        }
-
-        int laserCloudSurfStackNum2 = laserCloudSurfStack2->points.size();
-        for (int i = 0; i < laserCloudSurfStackNum2; i++) {
-          pointAssociateTobeMapped(&laserCloudSurfStack2->points[i], &laserCloudSurfStack2->points[i]);
-        }
 
         laserCloudCornerStack->clear();
-        downSizeFilterCorner.setInputCloud(laserCloudCornerStack2);
+        downSizeFilterCorner.setInputCloud(laserCloudCornerLast);
         downSizeFilterCorner.filter(*laserCloudCornerStack);
         int laserCloudCornerStackNum = laserCloudCornerStack->points.size();
 
         laserCloudSurfStack->clear();
-        downSizeFilterSurf.setInputCloud(laserCloudSurfStack2);
+        downSizeFilterSurf.setInputCloud(laserCloudSurfLast);
         downSizeFilterSurf.filter(*laserCloudSurfStack);
         int laserCloudSurfStackNum = laserCloudSurfStack->points.size();
-
-        laserCloudCornerStack2->clear();
-        laserCloudSurfStack2->clear();
 
 
         printf("map corner num %d  surf num %d \n", laserCloudCornerFromMapNum, laserCloudSurfFromMapNum);
@@ -669,8 +644,8 @@ int main(int argc, char** argv)
           kdtreeCornerFromMap->setInputCloud(laserCloudCornerFromMap);
           kdtreeSurfFromMap->setInputCloud(laserCloudSurfFromMap);
 
-
-          {
+          	if(0)
+          	{
               printf("\n \n");
               printf("init guess q %f %f %f %f t %f %f %f \n",parameters[3], parameters[0], parameters[1], parameters[2],
                                                               parameters[4], parameters[5], parameters[6]);
@@ -683,6 +658,7 @@ int main(int argc, char** argv)
                                                       t_gt.x(), t_gt.y(), t_gt.z());
 
               // set initial guess
+              /*
               parameters[0] = q_gt.x();
               parameters[1] = q_gt.y();
               parameters[2] = q_gt.z();
@@ -690,13 +666,14 @@ int main(int argc, char** argv)
               parameters[4] = t_gt.x();
               parameters[5] = t_gt.y();
               parameters[6] = t_gt.z();       
-              printf("set real gt initial guess\n");       
-          }
+              printf("set real gt initial guess\n");    
+              */   
+          	}
 
           for (int iterCount = 0; iterCount < 2; iterCount++) {
 
-            ceres::LossFunction *loss_function = NULL;
-            // ceres::LossFunction *loss_function = new ceres::HuberLoss(1.0);
+            //ceres::LossFunction *loss_function = NULL;
+            ceres::LossFunction *loss_function = new ceres::HuberLoss(0.1);
             ceres::LocalParameterization *q_parameterization = 
                 new ceres::EigenQuaternionParameterization();
             ceres::Problem::Options problem_options;
@@ -707,7 +684,7 @@ int main(int argc, char** argv)
             problem.AddParameterBlock(parameters+4, 3);
 
             int corner_num = 0;
-            if(0)
+            if(1)
             {
             for (int i = 0; i < laserCloudCornerStackNum; i++) {
               pointOri = laserCloudCornerStack->points[i];
@@ -716,61 +693,6 @@ int main(int argc, char** argv)
               kdtreeCornerFromMap->nearestKSearch(pointSel, 5, pointSearchInd, pointSearchSqDis);//寻找最近距离五个点
               
               if (pointSearchSqDis[4] < 1.0) {//5个点中最大距离不超过1才处理
-                //将五个最近点的坐标加和求平均
-                float cx = 0;
-                float cy = 0;
-                float cz = 0;
-                for (int j = 0; j < 5; j++) {
-                  cx += laserCloudCornerFromMap->points[pointSearchInd[j]].x;
-                  cy += laserCloudCornerFromMap->points[pointSearchInd[j]].y;
-                  cz += laserCloudCornerFromMap->points[pointSearchInd[j]].z;
-                }
-                cx /= 5;
-                cy /= 5; 
-                cz /= 5;
-
-                //求均方差
-                // construct vectors in line direction
-                float a11 = 0;
-                float a12 = 0; 
-                float a13 = 0;
-                float a22 = 0;
-                float a23 = 0; 
-                float a33 = 0;
-                for (int j = 0; j < 5; j++) {
-                  float ax = laserCloudCornerFromMap->points[pointSearchInd[j]].x - cx;
-                  float ay = laserCloudCornerFromMap->points[pointSearchInd[j]].y - cy;
-                  float az = laserCloudCornerFromMap->points[pointSearchInd[j]].z - cz;
-
-                  a11 += ax * ax;
-                  a12 += ax * ay;
-                  a13 += ax * az;
-                  a22 += ay * ay;
-                  a23 += ay * az;
-                  a33 += az * az;
-                }
-                /*
-                a11 /= 5;
-                a12 /= 5; 
-                a13 /= 5;
-                a22 /= 5;
-                a23 /= 5; 
-                a33 /= 5;
-                */
-
-                //构建矩阵
-                Eigen::Matrix3d matA1;
-                matA1(0, 0) = a11;
-                matA1(0, 1) = a12;
-                matA1(0, 2) = a13;
-                matA1(1, 0) = a12;
-                matA1(1, 1) = a22;
-                matA1(1, 2) = a23;
-                matA1(2, 0) = a13;
-                matA1(2, 1) = a23;
-                matA1(2, 2) = a33;
-
-
                 std::vector<Eigen::Vector3d> nearCorners;
                 Eigen::Vector3d center(0, 0, 0);
                 for(int j = 0; j < 5; j++)
@@ -794,7 +716,7 @@ int main(int argc, char** argv)
                 //std::cout << "covMat" << std::endl << covMat << std::endl;
 
                 //特征值分解
-                Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(matA1);
+                Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(covMat);
 
                 // if is indeed line feature
                 // note Eigen library sort eigenvalues in increasing order
@@ -816,7 +738,7 @@ int main(int argc, char** argv)
 
                   Eigen::Vector3d curr_point(pointOri.x, pointOri.y, pointOri.z);
                   Eigen::Vector3d unit_direction = saes.eigenvectors().col(2);
-                  Eigen::Vector3d point_on_line(cx, cy, cz);
+                  Eigen::Vector3d point_on_line = center;
 
                   Eigen::Vector3d point_a, point_b;
                   point_a = 0.1 * unit_direction + point_on_line;
@@ -825,6 +747,7 @@ int main(int argc, char** argv)
                   ceres::CostFunction* cost_function = LidarEdgeFactor::Create(curr_point, point_a, point_b, 1.0);
                   problem.AddResidualBlock(cost_function, loss_function, parameters, parameters+4);
                   corner_num++;
+
                   if(0)
                   {
                       std::cout << "point is " << curr_point[0] << ", " << curr_point[1] << ", " << curr_point[2] << ", and point_a is " 
@@ -872,11 +795,11 @@ int main(int argc, char** argv)
                   matA0(j, 0) = laserCloudSurfFromMap->points[pointSearchInd[j]].x;
                   matA0(j, 1) = laserCloudSurfFromMap->points[pointSearchInd[j]].y;
                   matA0(j, 2) = laserCloudSurfFromMap->points[pointSearchInd[j]].z;
-                  printf(" pts %f %f %f ", matA0(j, 0), matA0(j, 1), matA0(j, 2));
+                  //printf(" pts %f %f %f ", matA0(j, 0), matA0(j, 1), matA0(j, 2));
                 }
-                printf(" target pts %f %f %f ", pointSel.x, pointSel.y, pointSel.z);
+                //printf(" target pts %f %f %f ", pointSel.x, pointSel.y, pointSel.z);
 
-                printf("\n");
+                //printf("\n");
                 //求解matA0*matX0=matB0
                 // find the norm of plane
                 Eigen::Vector3d norm = matA0.colPivHouseholderQr().solve(matB0);
@@ -888,9 +811,11 @@ int main(int argc, char** argv)
                 bool planeValid = true;
                 for (int j = 0; j < 5; j++) {
                   // if OX * n > 0.2, then plane is not fit well
+                	/*
                 		printf("plane error %f\n", fabs(norm(0) * laserCloudSurfFromMap->points[pointSearchInd[j]].x +
                 	    norm(1) * laserCloudSurfFromMap->points[pointSearchInd[j]].y +
                 	    norm(2) * laserCloudSurfFromMap->points[pointSearchInd[j]].z + negative_OA_dot_norm));
+                	*/
                   if (fabs(norm(0) * laserCloudSurfFromMap->points[pointSearchInd[j]].x +
                       norm(1) * laserCloudSurfFromMap->points[pointSearchInd[j]].y +
                       norm(2) * laserCloudSurfFromMap->points[pointSearchInd[j]].z + negative_OA_dot_norm) > 0.2) {
@@ -911,7 +836,7 @@ int main(int argc, char** argv)
                   ceres::CostFunction* cost_function = LidarPlaneNormFactor::Create(curr_point, norm, negative_OA_dot_norm);
                   problem.AddResidualBlock(cost_function, loss_function, parameters, parameters+4);
                   surf_num++;
-                  if(1)
+                  if(0)
                   {
                       	std::cout << "point is " << curr_point[0] << ", " << curr_point[1] << ", " << curr_point[2] << 
                                    " plane norm is " << norm.x() << ", " << norm.y() << ", " << norm.z() <<
@@ -1034,6 +959,7 @@ int main(int argc, char** argv)
           downSizeFilterSurf.filter(*laserCloudSurfArray2[ind]);
 
           //Array与Array2交换，即滤波后自我更新
+          // no 2???
           pcl::PointCloud<PointType>::Ptr laserCloudTemp = laserCloudCornerArray[ind];
           laserCloudCornerArray[ind] = laserCloudCornerArray2[ind];
           laserCloudCornerArray2[ind] = laserCloudTemp;
@@ -1048,16 +974,12 @@ int main(int argc, char** argv)
         if (mapFrameCount >= mapFrameNum) {
           mapFrameCount = 0;
 
-          laserCloudSurround2->clear();
+          laserCloudSurround->clear();
           for (int i = 0; i < laserCloudSurroundNum; i++) {
             int ind = laserCloudSurroundInd[i];
-            *laserCloudSurround2 += *laserCloudCornerArray[ind];
-            *laserCloudSurround2 += *laserCloudSurfArray[ind];
+            *laserCloudSurround += *laserCloudCornerArray[ind];
+            *laserCloudSurround += *laserCloudSurfArray[ind];
           }
-
-          laserCloudSurround->clear();
-          downSizeFilterCorner.setInputCloud(laserCloudSurround2);
-          downSizeFilterCorner.filter(*laserCloudSurround);
 
           sensor_msgs::PointCloud2 laserCloudSurround3;
           pcl::toROSMsg(*laserCloudSurround, laserCloudSurround3);
@@ -1113,3 +1035,4 @@ int main(int argc, char** argv)
 // to do list
 // x z change
 // check 1 init & gt  2 transform to local and world
+// plane 0.02
