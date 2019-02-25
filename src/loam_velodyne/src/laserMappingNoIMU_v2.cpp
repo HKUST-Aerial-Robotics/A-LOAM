@@ -669,6 +669,30 @@ int main(int argc, char** argv)
           kdtreeCornerFromMap->setInputCloud(laserCloudCornerFromMap);
           kdtreeSurfFromMap->setInputCloud(laserCloudSurfFromMap);
 
+
+          {
+              printf("\n \n");
+              printf("init guess q %f %f %f %f t %f %f %f \n",parameters[3], parameters[0], parameters[1], parameters[2],
+                                                              parameters[4], parameters[5], parameters[6]);
+              Eigen::Matrix3d R_gt;
+              Eigen::Vector3d t_gt;
+              getGTPose(timeLaserOdometry, R_gt, t_gt);
+              Eigen::Quaterniond q_gt(R_gt);
+
+              printf("gt q %f %f %f %f t %f %f %f \n",q_gt.w(), q_gt.x(), q_gt.y(), q_gt.z(), 
+                                                      t_gt.x(), t_gt.y(), t_gt.z());
+
+              // set initial guess
+              parameters[0] = q_gt.x();
+              parameters[1] = q_gt.y();
+              parameters[2] = q_gt.z();
+              parameters[3] = q_gt.w();
+              parameters[4] = t_gt.x();
+              parameters[5] = t_gt.y();
+              parameters[6] = t_gt.z();       
+              printf("set real gt initial guess\n");       
+          }
+
           for (int iterCount = 0; iterCount < 2; iterCount++) {
 
             ceres::LossFunction *loss_function = NULL;
@@ -683,7 +707,7 @@ int main(int argc, char** argv)
             problem.AddParameterBlock(parameters+4, 3);
 
             int corner_num = 0;
-            if(1)
+            if(0)
             {
             for (int i = 0; i < laserCloudCornerStackNum; i++) {
               pointOri = laserCloudCornerStack->points[i];
@@ -801,7 +825,7 @@ int main(int argc, char** argv)
                   ceres::CostFunction* cost_function = LidarEdgeFactor::Create(curr_point, point_a, point_b, 1.0);
                   problem.AddResidualBlock(cost_function, loss_function, parameters, parameters+4);
                   corner_num++;
-                  if(1)
+                  if(0)
                   {
                       std::cout << "point is " << curr_point[0] << ", " << curr_point[1] << ", " << curr_point[2] << ", and point_a is " 
                              << point_a[0] << ", " << point_a[1] << ", " << point_a[2] << ", and point_b is " 
@@ -831,9 +855,9 @@ int main(int argc, char** argv)
               }
             }
         	}
-        	
+
             int surf_num = 0; 
-            if(0)
+            if(1)
             {
             for (int i = 0; i < laserCloudSurfStackNum; i++) {
               pointOri = laserCloudSurfStack->points[i];
@@ -848,8 +872,11 @@ int main(int argc, char** argv)
                   matA0(j, 0) = laserCloudSurfFromMap->points[pointSearchInd[j]].x;
                   matA0(j, 1) = laserCloudSurfFromMap->points[pointSearchInd[j]].y;
                   matA0(j, 2) = laserCloudSurfFromMap->points[pointSearchInd[j]].z;
+                  printf(" pts %f %f %f ", matA0(j, 0), matA0(j, 1), matA0(j, 2));
                 }
+                printf(" target pts %f %f %f ", pointSel.x, pointSel.y, pointSel.z);
 
+                printf("\n");
                 //求解matA0*matX0=matB0
                 // find the norm of plane
                 Eigen::Vector3d norm = matA0.colPivHouseholderQr().solve(matB0);
@@ -861,6 +888,9 @@ int main(int argc, char** argv)
                 bool planeValid = true;
                 for (int j = 0; j < 5; j++) {
                   // if OX * n > 0.2, then plane is not fit well
+                		printf("plane error %f\n", fabs(norm(0) * laserCloudSurfFromMap->points[pointSearchInd[j]].x +
+                	    norm(1) * laserCloudSurfFromMap->points[pointSearchInd[j]].y +
+                	    norm(2) * laserCloudSurfFromMap->points[pointSearchInd[j]].z + negative_OA_dot_norm));
                   if (fabs(norm(0) * laserCloudSurfFromMap->points[pointSearchInd[j]].x +
                       norm(1) * laserCloudSurfFromMap->points[pointSearchInd[j]].y +
                       norm(2) * laserCloudSurfFromMap->points[pointSearchInd[j]].z + negative_OA_dot_norm) > 0.2) {
@@ -883,47 +913,36 @@ int main(int argc, char** argv)
                   surf_num++;
                   if(1)
                   {
-                      std::cout << "point is " << curr_point[0] << ", " << curr_point[1] << ", " << curr_point[2] << 
+                      	std::cout << "point is " << curr_point[0] << ", " << curr_point[1] << ", " << curr_point[2] << 
                                    " plane norm is " << norm.x() << ", " << norm.y() << ", " << norm.z() <<
                                    " scalar is " << negative_OA_dot_norm << std::endl;
 
-                      double **para = new double *[2];
-                      para[0] = parameters;
-                      para[1] = parameters+4;
-                      double *res = new double[1];
-                      double **jaco = new double *[2];
-                      jaco[0] = new double[1 * 4];
-                      jaco[1] = new double[1 * 3];
-                      cost_function->Evaluate(para, res, jaco);
-                      printf("plane error %f \n", res[0]); 
-                      std::cout << Eigen::Map<Eigen::Matrix<double, 1, 4, Eigen::RowMajor>>(jaco[0]) << std::endl;
-                      std::cout << Eigen::Map<Eigen::Matrix<double, 1, 3, Eigen::RowMajor>>(jaco[1]) << std::endl;
 
-                      Eigen::Quaterniond q{parameters[3], parameters[0], parameters[1], parameters[2]};
-                      Eigen::Vector3d t{parameters[4], parameters[5], parameters[6]};
-                      Eigen::Vector3d t_cur;
-                      t_cur = q * curr_point + t;
-                      double e;
-                      e = norm.dot(t_cur) + negative_OA_dot_norm;
-                      printf("plane error my %f \n", e);
+	                      double **para = new double *[2];
+	                      para[0] = parameters;
+	                      para[1] = parameters+4;
+	                      double *res = new double[1];
+	                      double **jaco = new double *[2];
+	                      jaco[0] = new double[1 * 4];
+	                      jaco[1] = new double[1 * 3];
+	                      cost_function->Evaluate(para, res, jaco);
+	                      printf("plane error %f \n", res[0]); 
+	                      //std::cout << Eigen::Map<Eigen::Matrix<double, 1, 4, Eigen::RowMajor>>(jaco[0]) << std::endl;
+	                      //std::cout << Eigen::Map<Eigen::Matrix<double, 1, 3, Eigen::RowMajor>>(jaco[1]) << std::endl;
+
+	                      Eigen::Quaterniond q{parameters[3], parameters[0], parameters[1], parameters[2]};
+	                      Eigen::Vector3d t{parameters[4], parameters[5], parameters[6]};
+	                      Eigen::Vector3d t_cur;
+	                      t_cur = q * curr_point + t;
+	                      double e;
+	                      e = norm.dot(t_cur) + negative_OA_dot_norm;
+	                      printf("plane error my %f \n", e);
                   }
                   
                 }
               }
             }
         	}
-            {
-                printf("\n \n");
-                printf("init guess q %f %f %f %f t %f %f %f \n",parameters[3], parameters[0], parameters[1], parameters[2],
-                                                                parameters[4], parameters[5], parameters[6]);
-                Eigen::Matrix3d R_gt;
-                Eigen::Vector3d t_gt;
-                getGTPose(timeLaserOdometry, R_gt, t_gt);
-                Eigen::Quaterniond q_gt(R_gt);
-
-                printf("gt q %f %f %f %f t %f %f %f \n",q_gt.w(), q_gt.x(), q_gt.y(), q_gt.z(), 
-                                                        t_gt.x(), t_gt.y(), t_gt.z());
-            }
 
             ceres::Solver::Options options;
             options.linear_solver_type = ceres::DENSE_QR;
