@@ -40,6 +40,13 @@
   交换后：R = Ry(yaw)*Rx(pitch)*Rz(roll)
 *******************************************************************************/
 
+#define BACKWARD_HAS_DW 1
+#include <backward.hpp>
+namespace backward
+{
+backward::SignalHandling sh;
+} // namespace backward
+
 #include <cmath>
 #include <vector>
 
@@ -71,16 +78,16 @@ int systemInitCount = 0;
 bool systemInited = false;
 
 //激光雷达线数
-const int N_SCANS = 16;
+int N_SCANS = 64;
 
 //点云曲率, 40000为一帧点云中点的最大数量
-float cloudCurvature[40000];
+float cloudCurvature[400000];
 //曲率点对应的序号
-int cloudSortInd[40000];
+int cloudSortInd[400000];
 //点是否筛选过标志：0-未筛选过，1-筛选过
-int cloudNeighborPicked[40000];
+int cloudNeighborPicked[400000];
 //点分类标号:2-代表曲率很大，1-代表曲率比较大,-1-代表曲率很小，0-曲率比较小(其中1包含了2,0包含了1,0和1构成了点云全部的点)
-int cloudLabel[40000];
+int cloudLabel[400000];
 
 //imu时间戳大于当前点云时间戳的位置
 int imuPointerFront = 0;
@@ -366,6 +373,9 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
     //计算点的仰角(根据lidar文档垂直角计算公式),根据仰角排列激光线号，velodyne每两个scan之间间隔2度
     float angle = atan(point.z / sqrt(point.x * point.x + point.y * point.y)) * 180 / M_PI;
     int scanID;
+
+    if(N_SCANS == 16)
+    {
     //仰角四舍五入(加减0.5截断效果等于四舍五入)
     int roundedAngle = int(angle + (angle<0.0?-0.5:+0.5)); 
     if (roundedAngle > 0){
@@ -379,6 +389,33 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
       count--;
       continue;
     }
+    }
+
+    else if(N_SCANS == 64)
+    {
+        if (angle >= -8.83)
+        {
+          scanID = int((2 - angle) * 3.0 + 0.5);
+        }
+        else 
+        {
+            scanID = N_SCANS / 2 + int((-8.83 - angle) * 2.0 + 0.5);
+        }
+        //过滤点，只挑选[-24.33度，+2度]范围内的点,scanID属于[0,63]
+        if (scanID > (N_SCANS - 1) || scanID < 0 )
+        {
+            count--;
+            continue;
+        }
+    }  
+    else
+    {
+      printf("wrong scan number\n");
+      ROS_BREAK();
+    }
+
+    //printf("angle %f scanID %d \n", angle, scanID);
+        
 
     //该点的旋转角
     float ori = -atan2(point.y, point.x);
@@ -512,6 +549,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
                 + laserCloud->points[i + 3].z + laserCloud->points[i + 4].z
                 + laserCloud->points[i + 5].z;
     //曲率计算
+    //printf("i %d\n",i );
     cloudCurvature[i] = diffX * diffX + diffY * diffY + diffZ * diffZ;
     //记录曲率点的索引
     cloudSortInd[i] = i;
