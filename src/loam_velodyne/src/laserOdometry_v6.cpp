@@ -16,6 +16,7 @@
 #include <eigen3/Eigen/Dense>
 
 #include "loam_velodyne/common.h"
+#include "loam_velodyne/tic_toc.h"
 #include "lidarFactor_v6.cpp"
 
 #define BACKWARD_HAS_DW 1	
@@ -322,9 +323,9 @@ int main(int argc, char **argv)
                 laserCloudSurfLastNum = laserCloudSurfLast->points.size();
 
                 // construct kdtree
-                printf("laserCloudCornerLast size %d\n", laserCloudCornerLast->points.size());
+                //printf("laserCloudCornerLast size %d\n", laserCloudCornerLast->points.size());
                 kdtreeCornerLast->setInputCloud(laserCloudCornerLast);
-                printf("laserCloudSurfLast size %d\n", laserCloudSurfLast->points.size());
+                //printf("laserCloudSurfLast size %d\n", laserCloudSurfLast->points.size());
                 kdtreeSurfLast->setInputCloud(laserCloudSurfLast);
 
 /*                 std::cout << "****************************************************************\n";
@@ -354,7 +355,7 @@ int main(int argc, char **argv)
                 std::cout<< "Initialization finished \n";
                 continue;
             }
-
+            TicToc t_whole;
             // if (laserCloudCornerLastNum > 10 && laserCloudSurfLastNum > 100)
             // {
                 int cornerPointsSharpNum = cornerPointsSharp->points.size();
@@ -370,8 +371,11 @@ int main(int argc, char **argv)
                 para_t[1] = 0;
                 para_t[2] = 0;
                 */
+                TicToc t_opt;
                 for (size_t opti_counter = 0; opti_counter < 2; ++opti_counter)
                 {
+                    corner_correspondence = 0;
+                    plane_correspondence = 0;
                     // LOG(INFO) << "******************************* " << opti_counter << " ***************************************";
                     // LOG(INFO) << "parameter is " << parameters[0] << ", " << parameters[1] << ", " << parameters[2]
                     //                              << ", " << parameters[3] << ", " << parameters[4] << ", " << parameters[5]
@@ -422,10 +426,8 @@ int main(int argc, char **argv)
                         para_t[2] = rela_t_gt.z();
                         printf("init guess q %f %f %f %f t %f %f %f \n", para_q[0], para_q[1], para_q[2], para_q[3],
                                                                           para_t[0], para_t[1], para_t[2]);
-                    
                     }
-
-
+                    TicToc t_data;
                     // find correspondence for corner features
                     for (size_t i = 0; i < cornerPointsSharpNum; ++i)
                     {
@@ -711,6 +713,8 @@ int main(int argc, char **argv)
                         }
                     }
                     }
+                    //printf("coner_correspondance %d, plane_correspondence %d \n", corner_correspondence, plane_correspondence);
+                    printf("data association time %f ms \n", t_data.toc());
 
                     // std::cout << "parameters: " << parameters[0] << ", " << parameters[1] << ", " << parameters[2]
                     //           << ", " << parameters[3] << ", " << parameters[4] << ", " << parameters[5] << ", "
@@ -722,15 +726,16 @@ int main(int argc, char **argv)
                         break;
                     }
 
+                    TicToc t_solver;
                     ceres::Solver::Options options;
                     options.linear_solver_type = ceres::DENSE_QR;
                     options.max_num_iterations = 5;
                     //options.check_gradients = false;
                     //options.gradient_check_relative_precision = 1e-4;
-                    options.minimizer_progress_to_stdout = true;
+                    options.minimizer_progress_to_stdout = false;
                     ceres::Solver::Summary summary;
                     ceres::Solve(options, &problem, &summary);
-
+                    printf("solver time %f ms \n", t_solver.toc());
                     /*
                     LOG(INFO) << summary.BriefReport();
                     LOG(INFO) << "parameter is " << para_t[0] << ", " << para_t[1] << ", " << para_t[2]
@@ -741,11 +746,13 @@ int main(int argc, char **argv)
                     */
 
                 }
+                printf("optimization twice time %f \n", t_opt.toc());
 
                 t_w_curr = t_w_curr + q_w_curr * t_last_curr;
                 q_w_curr = q_w_curr * q_last_curr;
 
-            // }    // if (cornerNum && planeNum)
+                TicToc t_pub;
+                if(0)
                 {
                     printf("finish one message %f\n", timeCornerPointsSharp);
 
@@ -801,7 +808,8 @@ int main(int argc, char **argv)
                     
                 }
 
-            // publish point cloud for visualization    
+            // publish point cloud for visualization   
+            if(0) 
             {
                 // publish corner points
                 pcl::PointCloud<PointType> cornerPointsCurrToLast;
@@ -875,28 +883,29 @@ int main(int argc, char **argv)
             tfBroadcaster.sendTransform(laserOdometryTrans);
 
             // transform corner features and plane features to the scan end point
-            int cornerPointsLessSharpNum = cornerPointsLessSharp->points.size();
-            for (int i = 0; i < cornerPointsLessSharpNum; i++) 
+            if(0)
             {
-                TransformToEnd(&cornerPointsLessSharp->points[i], &cornerPointsLessSharp->points[i]);
-            }
+                int cornerPointsLessSharpNum = cornerPointsLessSharp->points.size();
+                for (int i = 0; i < cornerPointsLessSharpNum; i++) 
+                {
+                    TransformToEnd(&cornerPointsLessSharp->points[i], &cornerPointsLessSharp->points[i]);
+                }
 
-            int surfPointsLessFlatNum = surfPointsLessFlat->points.size();
-            for (int i = 0; i < surfPointsLessFlatNum; i++) 
-            {
-                TransformToEnd(&surfPointsLessFlat->points[i], &surfPointsLessFlat->points[i]);
-            }
+                int surfPointsLessFlatNum = surfPointsLessFlat->points.size();
+                for (int i = 0; i < surfPointsLessFlatNum; i++) 
+                {
+                    TransformToEnd(&surfPointsLessFlat->points[i], &surfPointsLessFlat->points[i]);
+                }
 
-            frameCount++;
-            // all points in the cloud, undistort every `skipFrameNum` frame
-            if (frameCount >= skipFrameNum + 1) 
-            {
                 int laserCloudFullResNum = laserCloudFullRes->points.size();
                 for (int i = 0; i < laserCloudFullResNum; i++) 
                 {
                     TransformToEnd(&laserCloudFullRes->points[i], &laserCloudFullRes->points[i]);
                 }
             }
+
+            frameCount++;
+
 
             pcl::PointCloud<PointType>::Ptr laserCloudTemp = cornerPointsLessSharp;
             cornerPointsLessSharp = laserCloudCornerLast;
@@ -914,10 +923,10 @@ int main(int argc, char **argv)
             // TODO
             // if (laserCloudCornerLastNum > 10 && laserCloudSurfLastNum > 100) 
             // {
-                printf("laserCloudCornerLast size %d\n", laserCloudCornerLast->points.size());
-                kdtreeCornerLast->setInputCloud(laserCloudCornerLast);
-                printf("laserCloudSurfLast size %d\n", laserCloudSurfLast->points.size());
-                kdtreeSurfLast->setInputCloud(laserCloudSurfLast);
+            //printf("laserCloudCornerLast size %d\n", laserCloudCornerLast->points.size());
+            kdtreeCornerLast->setInputCloud(laserCloudCornerLast);
+            //printf("laserCloudSurfLast size %d\n", laserCloudSurfLast->points.size());
+            kdtreeSurfLast->setInputCloud(laserCloudSurfLast);
             // }
 
             // clear parameters
@@ -952,6 +961,8 @@ int main(int argc, char **argv)
                 laserCloudFullRes3.header.frame_id = "/camera";
                 pubLaserCloudFullRes.publish(laserCloudFullRes3);
             }
+            printf("publication time %f ms \n", t_pub.toc());
+            printf("whole laserOdometry time %f ms \n \n", t_whole.toc());
         }
         rate.sleep();
     }
