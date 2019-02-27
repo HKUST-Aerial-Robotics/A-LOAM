@@ -167,7 +167,6 @@ void getRelativeGTPose(double timestamp_curr, double timestamp_last, Eigen::Matr
 //基于匀速模型，根据上次微调的结果和odometry这次与上次计算的结果，猜测一个新的世界坐标系的转换矩阵transformTobeMapped
 void transformAssociateToMap()
 {
-
 	Eigen::Matrix4d T_w_curr, T_w_last, T_w_last_tilde, T_w_curr_tilde;
 
 	T_w_last = Eigen::Matrix4d::Identity();
@@ -273,19 +272,19 @@ int main(int argc, char **argv)
 	ros::init(argc, argv, "laserMapping");
 	ros::NodeHandle nh;
 
-	ros::Subscriber subLaserCloudCornerLast = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_corner_last", 2, laserCloudCornerLastHandler);
+	ros::Subscriber subLaserCloudCornerLast = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_corner_last", 100, laserCloudCornerLastHandler);
 
-	ros::Subscriber subLaserCloudSurfLast = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_surf_last", 2, laserCloudSurfLastHandler);
+	ros::Subscriber subLaserCloudSurfLast = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_surf_last", 100, laserCloudSurfLastHandler);
 
-	ros::Subscriber subLaserOdometry = nh.subscribe<nav_msgs::Odometry>("/laser_odom_to_init", 5, laserOdometryHandler);
+	ros::Subscriber subLaserOdometry = nh.subscribe<nav_msgs::Odometry>("/laser_odom_to_init", 100, laserOdometryHandler);
 
-	ros::Subscriber subLaserCloudFullRes = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_cloud_3", 2, laserCloudFullResHandler);
+	ros::Subscriber subLaserCloudFullRes = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_cloud_3", 100, laserCloudFullResHandler);
 
-	ros::Publisher pubLaserCloudSurround = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_surround", 1);
+	ros::Publisher pubLaserCloudSurround = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_surround", 100);
 
-	ros::Publisher pubLaserCloudFullRes = nh.advertise<sensor_msgs::PointCloud2>("/velodyne_cloud_registered", 2);
+	ros::Publisher pubLaserCloudFullRes = nh.advertise<sensor_msgs::PointCloud2>("/velodyne_cloud_registered", 100);
 
-	ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>("/aft_mapped_to_init", 5);
+	ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>("/aft_mapped_to_init", 100);
 	nav_msgs::Odometry odomAftMapped;
 	odomAftMapped.header.frame_id = "/camera_init";
 	odomAftMapped.child_frame_id = "/aft_mapped";
@@ -343,12 +342,14 @@ int main(int argc, char **argv)
 			newLaserOdometry = false;
 
 			frameCount++;
-
+			
+			TicToc t_whole;
 			if (frameCount >= stackFrameNum)
 			{
 
 				transformAssociateToMap();
 
+				TicToc t_shift;
 				//立方体中点在世界坐标系下的（原点）位置
 				//过半取一（以50米进行四舍五入的效果），由于数组下标只能为正数，而地图可能建立在原点前后，因此
 				//每一维偏移一个laserCloudCenWidth（该值会动态调整，以使得数组利用最大化，初始值为该维数组长度1/2）的量
@@ -655,13 +656,15 @@ int main(int argc, char **argv)
 				downSizeFilterSurf.filter(*laserCloudSurfStack);
 				int laserCloudSurfStackNum = laserCloudSurfStack->points.size();
 
-				printf("map corner num %d  surf num %d \n", laserCloudCornerFromMapNum, laserCloudSurfFromMapNum);
+				printf("map prepare time %f ms\n", t_shift.toc());
+				//printf("map corner num %d  surf num %d \n", laserCloudCornerFromMapNum, laserCloudSurfFromMapNum);
 				if (laserCloudCornerFromMapNum > 10 && laserCloudSurfFromMapNum > 50)
 				{
-
+					TicToc t_opt;
+					TicToc t_tree;
 					kdtreeCornerFromMap->setInputCloud(laserCloudCornerFromMap);
 					kdtreeSurfFromMap->setInputCloud(laserCloudSurfFromMap);
-
+					printf("build tree time %f ms \n", t_tree.toc());
 					if (0)
 					{
 						printf("\n \n");
@@ -687,7 +690,7 @@ int main(int argc, char **argv)
               			printf("set real gt initial guess\n");    
               			*/
 					}
-
+					
 					for (int iterCount = 0; iterCount < 2; iterCount++)
 					{
 
@@ -702,6 +705,7 @@ int main(int argc, char **argv)
 						problem.AddParameterBlock(parameters, 4, q_parameterization);
 						problem.AddParameterBlock(parameters + 4, 3);
 
+						TicToc t_data;
 						int corner_num = 0;
 						if (1)
 						{
@@ -890,19 +894,25 @@ int main(int argc, char **argv)
 							}
 						}
 
+						printf("mapping data assosiation time %f ms \n", t_data.toc());
+
+						TicToc t_solver;
 						ceres::Solver::Options options;
 						options.linear_solver_type = ceres::DENSE_QR;
 						options.max_num_iterations = 5;
-						options.minimizer_progress_to_stdout = true;
+						options.minimizer_progress_to_stdout = false;
 						options.check_gradients = false;
 						options.gradient_check_relative_precision = 1e-4;
 						ceres::Solver::Summary summary;
 						ceres::Solve(options, &problem, &summary);
 
-						printf("time %f \n", timeLaserOdometry);
+						printf("mapping solver time %f ms \n", t_solver.toc());
+
+						//printf("time %f \n", timeLaserOdometry);
 						printf("corner factor num %d surf factor num %d\n", corner_num, surf_num);
-						printf("result q %f %f %f %f result t %f %f %f\n", parameters[3], parameters[0], parameters[1], parameters[2],
-							   parameters[4], parameters[5], parameters[6]);
+						//printf("result q %f %f %f %f result t %f %f %f\n", parameters[3], parameters[0], parameters[1], parameters[2],
+						//	   parameters[4], parameters[5], parameters[6]);
+						if(0)
 						{
 							Eigen::Matrix3d R_gt;
 							Eigen::Vector3d t_gt;
@@ -912,9 +922,9 @@ int main(int argc, char **argv)
 							printf("gt q %f %f %f %f t %f %f %f \n", q_gt.w(), q_gt.x(), q_gt.y(), q_gt.z(),
 								   t_gt.x(), t_gt.y(), t_gt.z());
 						}
-
-						printf("\n");
+						//printf("\n");
 					}
+					printf("mapping optimization time %f \n", t_opt.toc());
 
 					//迭代结束更新相关的转移矩阵
 					transformUpdate();
@@ -924,6 +934,8 @@ int main(int argc, char **argv)
 					printf("time %f Map corner and surf num are not enough\n", timeLaserOdometry);
 				}
 
+
+				TicToc t_pub;
 				//将corner points按距离（比例尺缩小）归入相应的立方体
 				for (int i = 0; i < laserCloudCornerStackNum; i++)
 				{
@@ -1057,7 +1069,10 @@ int main(int argc, char **argv)
 				aftMappedTrans.setRotation(tf::Quaternion(q_w_curr.x(), q_w_curr.y(), q_w_curr.z(), q_w_curr.w()));
 				aftMappedTrans.setOrigin(tf::Vector3(t_w_curr.x(), t_w_curr.y(), t_w_curr.z()));
 				tfBroadcaster.sendTransform(aftMappedTrans);
+
+				printf("mapping pub time %f ms \n", t_pub.toc());
 			}
+			printf("whole mapping time %f ms +++++\n", t_whole.toc());
 		}
 
 		status = ros::ok();

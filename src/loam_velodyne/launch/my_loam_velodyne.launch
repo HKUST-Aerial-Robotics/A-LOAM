@@ -5,8 +5,7 @@
   <node pkg="loam_velodyne" type="scanRegistration" name="scanRegistration" output="screen"/>
 
   <node pkg="loam_velodyne" type="my_laserOdometry" name="my_laserOdometry" output="screen" />
-
-  <!--
-  <node pkg="loam_velodyne" type="my_laserMapping" name="my_laserMapping" output="screen"/>
-	-->
+<!--
+  <node pkg="loam_velodyne" type="my_laserMapping" name="my_laserMapping" output="screen" />
+-->
 </launch>
