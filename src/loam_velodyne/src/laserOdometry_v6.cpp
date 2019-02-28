@@ -37,7 +37,7 @@ constexpr double SCAN_PERIOD = 0.1;
 constexpr double DISTANCE_SQ_THRESHOLD = 25;
 constexpr double NEARBY_SCAN = 2.5;
 
-const int skipFrameNum = 4;
+const int skipFrameNum = 2;
 bool systemInited = false;
 
 double timeCornerPointsSharp = 0;

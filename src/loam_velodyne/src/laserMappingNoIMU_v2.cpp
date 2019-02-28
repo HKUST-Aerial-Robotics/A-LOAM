@@ -220,9 +220,11 @@ int main(int argc, char **argv)
 	pcl::VoxelGrid<PointType> downSizeFilterCorner;
 	//设置体素大小
 	downSizeFilterCorner.setLeafSize(0.2, 0.2, 0.2);
+	//downSizeFilterCorner.setLeafSize(0.4, 0.4, 0.4);
 
 	pcl::VoxelGrid<PointType> downSizeFilterSurf;
 	downSizeFilterSurf.setLeafSize(0.4, 0.4, 0.4);
+	//downSizeFilterSurf.setLeafSize(0.8, 0.8, 0.8);
 
 	//指针初始化
 	for (int i = 0; i < laserCloudNum; i++)
