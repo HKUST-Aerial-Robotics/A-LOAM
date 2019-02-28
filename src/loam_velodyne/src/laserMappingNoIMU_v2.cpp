@@ -17,6 +17,8 @@
 #include <tf/transform_broadcaster.h>
 #include <eigen3/Eigen/Dense>
 #include <ceres/ceres.h>
+#include <mutex>
+#include <queue>
 
 #include "lidarFactor_v6.cpp"
 #include "loam_velodyne/common.h"
@@ -105,6 +107,12 @@ Eigen::Vector3d t_w_last_tilde(0, 0, 0);
 
 Eigen::Quaterniond q_w_last(1, 0, 0, 0);
 Eigen::Vector3d t_w_last(0, 0, 0);
+
+std::queue<sensor_msgs::PointCloud2ConstPtr> cornerLastBuf;
+std::queue<sensor_msgs::PointCloud2ConstPtr> surfLastBuf;
+std::queue<sensor_msgs::PointCloud2ConstPtr> fullResBuf;
+std::queue<nav_msgs::Odometry::ConstPtr> odometryBuf;
+std::mutex mBuf;
 
 #define TIME_STILL 1
 
@@ -221,39 +229,58 @@ void pointAssociateTobeMapped(PointType const *const pi, PointType *const po)
 //接收边沿点
 void laserCloudCornerLastHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudCornerLast2)
 {
+	mBuf.lock();
+	cornerLastBuf.push(laserCloudCornerLast2);
+	mBuf.unlock();
+	/*
 	timeLaserCloudCornerLast = laserCloudCornerLast2->header.stamp.toSec();
 
 	laserCloudCornerLast->clear();
 	pcl::fromROSMsg(*laserCloudCornerLast2, *laserCloudCornerLast);
 
 	newLaserCloudCornerLast = true;
+	*/
 }
 
 //接收平面点
 void laserCloudSurfLastHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudSurfLast2)
 {
+	mBuf.lock();
+	surfLastBuf.push(laserCloudSurfLast2);
+	mBuf.unlock();
+	/*
 	timeLaserCloudSurfLast = laserCloudSurfLast2->header.stamp.toSec();
 
 	laserCloudSurfLast->clear();
 	pcl::fromROSMsg(*laserCloudSurfLast2, *laserCloudSurfLast);
 
 	newLaserCloudSurfLast = true;
+	*/
 }
 
 //接收点云全部点
 void laserCloudFullResHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudFullRes2)
 {
+	mBuf.lock();
+	fullResBuf.push(laserCloudFullRes2);
+	mBuf.unlock();
+	/*
 	timeLaserCloudFullRes = laserCloudFullRes2->header.stamp.toSec();
 
 	laserCloudFullRes->clear();
 	pcl::fromROSMsg(*laserCloudFullRes2, *laserCloudFullRes);
 
 	newLaserCloudFullRes = true;
+	*/
 }
 
 //接收旋转平移信息
 void laserOdometryHandler(const nav_msgs::Odometry::ConstPtr &laserOdometry)
 {
+	mBuf.lock();
+	odometryBuf.push(laserOdometry);
+	mBuf.unlock();
+	/*
 	timeLaserOdometry = laserOdometry->header.stamp.toSec();
 
 	q_w_curr_tilde.x() = laserOdometry->pose.pose.orientation.x;
@@ -265,6 +292,7 @@ void laserOdometryHandler(const nav_msgs::Odometry::ConstPtr &laserOdometry)
 	t_w_curr_tilde.z() = laserOdometry->pose.pose.position.z;
 
 	newLaserOdometry = true;
+	*/
 }
 
 int main(int argc, char **argv)
@@ -331,15 +359,51 @@ int main(int argc, char **argv)
 	{
 		ros::spinOnce();
 
-		if (newLaserCloudCornerLast && newLaserCloudSurfLast && newLaserCloudFullRes && newLaserOdometry &&
-			fabs(timeLaserCloudCornerLast - timeLaserOdometry) < 0.005 &&
-			fabs(timeLaserCloudSurfLast - timeLaserOdometry) < 0.005 &&
-			fabs(timeLaserCloudFullRes - timeLaserOdometry) < 0.005)
-		{
-			newLaserCloudCornerLast = false;
-			newLaserCloudSurfLast = false;
-			newLaserCloudFullRes = false;
-			newLaserOdometry = false;
+		if (!cornerLastBuf.empty() && !surfLastBuf.empty() &&
+            !fullResBuf.empty() && !odometryBuf.empty())
+        {
+			mBuf.lock();
+			while(!odometryBuf.empty() && odometryBuf.front()->header.stamp.toSec() < cornerLastBuf.front()->header.stamp.toSec())
+				odometryBuf.pop();
+			if(odometryBuf.empty())
+				continue;
+			
+			timeLaserCloudCornerLast = cornerLastBuf.front()->header.stamp.toSec();
+			timeLaserCloudSurfLast = surfLastBuf.front()->header.stamp.toSec();
+			timeLaserCloudFullRes = fullResBuf.front()->header.stamp.toSec();
+			timeLaserOdometry = odometryBuf.front()->header.stamp.toSec();
+
+            if(timeLaserCloudCornerLast != timeLaserOdometry || 
+               timeLaserCloudSurfLast != timeLaserOdometry ||
+               timeLaserCloudFullRes != timeLaserOdometry )
+            {
+				printf("time corner %f surf %f full %f odom %f \n",timeLaserCloudCornerLast, timeLaserCloudSurfLast, timeLaserCloudFullRes, timeLaserOdometry);
+                printf("unsync messeage!");
+                ROS_BREAK();
+			}
+
+			laserCloudCornerLast->clear();
+			pcl::fromROSMsg(*cornerLastBuf.front(), *laserCloudCornerLast);
+			cornerLastBuf.pop();
+
+			laserCloudSurfLast->clear();
+			pcl::fromROSMsg(*surfLastBuf.front(), *laserCloudSurfLast);
+			surfLastBuf.pop();
+
+			laserCloudFullRes->clear();
+			pcl::fromROSMsg(*fullResBuf.front(), *laserCloudFullRes);
+			fullResBuf.pop();
+
+			q_w_curr_tilde.x() = odometryBuf.front()->pose.pose.orientation.x;
+			q_w_curr_tilde.y() = odometryBuf.front()->pose.pose.orientation.y;
+			q_w_curr_tilde.z() = odometryBuf.front()->pose.pose.orientation.z;
+			q_w_curr_tilde.w() = odometryBuf.front()->pose.pose.orientation.w;
+			t_w_curr_tilde.x() = odometryBuf.front()->pose.pose.position.x;
+			t_w_curr_tilde.y() = odometryBuf.front()->pose.pose.position.y;
+			t_w_curr_tilde.z() = odometryBuf.front()->pose.pose.position.z;
+			odometryBuf.pop();
+
+			mBuf.unlock();
 
 			frameCount++;
 			
@@ -699,7 +763,6 @@ int main(int argc, char **argv)
 						ceres::LocalParameterization *q_parameterization =
 							new ceres::EigenQuaternionParameterization();
 						ceres::Problem::Options problem_options;
-						problem_options.cost_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
 
 						ceres::Problem problem(problem_options);
 						problem.AddParameterBlock(parameters, 4, q_parameterization);
