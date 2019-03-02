@@ -35,7 +35,7 @@ int corner_correspondence = 0, plane_correspondence = 0;
 
 constexpr double SCAN_PERIOD = 0.1;
 constexpr double DISTANCE_SQ_THRESHOLD = 25;
-constexpr double NEARBY_SCAN = 2.5;
+constexpr double NEARBY_SCAN = 1.5;
 
 const int skipFrameNum = 2;
 bool systemInited = false;
@@ -76,7 +76,7 @@ Eigen::Vector3d t_w_curr(0, 0, 0);
 
 // q_curr_last(x, y, z, w), t_curr_last
 double para_q[4] = {0, 0, 0, 1};
-double para_t[4] = {0, 0, 0};
+double para_t[3] = {0, 0, 0};
 
 Eigen::Map<Eigen::Quaterniond> q_last_curr(para_q);
 Eigen::Map<Eigen::Vector3d> t_last_curr(para_t);
@@ -471,7 +471,7 @@ int main(int argc, char **argv)
                     TicToc t_solver;
                     ceres::Solver::Options options;
                     options.linear_solver_type = ceres::DENSE_QR;
-                    options.max_num_iterations = 5;
+                    options.max_num_iterations = 4;
                     //options.check_gradients = false;
                     //options.gradient_check_relative_precision = 1e-4;
                     options.minimizer_progress_to_stdout = false;

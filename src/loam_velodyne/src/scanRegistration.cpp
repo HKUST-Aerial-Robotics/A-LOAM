@@ -47,7 +47,7 @@ backward::SignalHandling sh;
 
 #include <cmath>
 #include <vector>
-
+#include <string>
 #include "loam_velodyne/common.h"
 #include "loam_velodyne/tic_toc.h"
 #include <opencv/cv.h>
@@ -95,6 +95,8 @@ ros::Publisher pubCornerPointsSharp;
 ros::Publisher pubCornerPointsLessSharp;
 ros::Publisher pubSurfPointsFlat;
 ros::Publisher pubSurfPointsLessFlat;
+
+std::vector<ros::Publisher> pubEachScan;
 
 // Tong add
 template <typename PointT>
@@ -586,6 +588,19 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
     surfPointsLessFlat2.header.frame_id = "/camera";
     pubSurfPointsLessFlat.publish(surfPointsLessFlat2);
 
+    // pub each scan for visualization
+    if(0)
+    {
+        for (int i = 0; i < N_SCANS; i++)
+        {
+            sensor_msgs::PointCloud2 scanMsg;
+            pcl::toROSMsg(laserCloudScans[i], scanMsg);
+            scanMsg.header.stamp = laserCloudMsg->header.stamp;
+            scanMsg.header.frame_id = "/camera_init";
+            pubEachScan[i].publish(scanMsg);
+        }
+    }
+
     printf("scan registration time %f ms *************\n", t_whole.toc());
 }
 
@@ -605,6 +620,12 @@ int main(int argc, char **argv)
     pubSurfPointsFlat = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_flat", 100);
 
     pubSurfPointsLessFlat = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_less_flat", 100);
+
+    for(int i = 0; i < N_SCANS; i++)
+    {
+        ros::Publisher pubScan = nh.advertise<sensor_msgs::PointCloud2>("/velodyne_scan_" + std::to_string(i), 100);
+        pubEachScan.push_back(pubScan);
+    }
 
     ros::spin();
 

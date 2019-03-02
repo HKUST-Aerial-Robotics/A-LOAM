@@ -43,12 +43,23 @@ double timeLaserCloudSurfLast = 0;
 double timeLaserCloudFullRes = 0;
 double timeLaserOdometry = 0;
 
+/*
 int laserCloudCenWidth = 10;
 int laserCloudCenHeight = 10;
 int laserCloudCenDepth = 5;
 const int laserCloudWidth = 21;
 const int laserCloudHeight = 21;
 const int laserCloudDepth = 11;
+*/
+
+int laserCloudCenWidth = 2;
+int laserCloudCenHeight = 2;
+int laserCloudCenDepth = 1;
+const int laserCloudWidth = 5;
+const int laserCloudHeight = 5;
+const int laserCloudDepth = 3;
+
+
 //点云方块集合最大数量
 const int laserCloudNum = laserCloudWidth * laserCloudHeight * laserCloudDepth; //4851
 
@@ -105,24 +116,11 @@ std::mutex mBuf;
 //基于匀速模型，根据上次微调的结果和odometry这次与上次计算的结果，猜测一个新的世界坐标系的转换矩阵transformTobeMapped
 void transformAssociateToMap()
 {
-	Eigen::Matrix4d T_w_curr, T_w_last, T_w_last_tilde, T_w_curr_tilde;
+	Eigen::Quaterniond q_rela = q_w_last_tilde.inverse() * q_w_curr_tilde;
+	Eigen::Vector3d t_rela = q_w_last_tilde.inverse() * (t_w_curr_tilde - t_w_last_tilde);
 
-	T_w_last = Eigen::Matrix4d::Identity();
-	T_w_last.block<3, 3>(0, 0) = q_w_last.toRotationMatrix();
-	T_w_last.block<3, 1>(0, 3) = t_w_last;
-
-	T_w_last_tilde = Eigen::Matrix4d::Identity();
-	T_w_last_tilde.block<3, 3>(0, 0) = q_w_last_tilde.toRotationMatrix();
-	T_w_last_tilde.block<3, 1>(0, 3) = t_w_last_tilde;
-
-	T_w_curr_tilde = Eigen::Matrix4d::Identity();
-	T_w_curr_tilde.block<3, 3>(0, 0) = q_w_curr_tilde.toRotationMatrix();
-	T_w_curr_tilde.block<3, 1>(0, 3) = t_w_curr_tilde;
-
-	T_w_curr = T_w_last * T_w_last_tilde.inverse() * T_w_curr_tilde;
-
-	q_w_curr = T_w_curr.block<3, 3>(0, 0);
-	t_w_curr = T_w_curr.block<3, 1>(0, 3);
+	q_w_curr = q_w_last * q_rela;
+	t_w_curr = q_w_last * t_rela + t_w_last;
 }
 
 //记录odometry发送的转换矩阵与mapping之后的转换矩阵，下一帧点云会使用(有IMU的话会使用IMU进行补偿)
@@ -143,6 +141,7 @@ void pointAssociateToMap(PointType const *const pi, PointType *const po)
 	po->y = point_w.y();
 	po->z = point_w.z();
 	po->intensity = pi->intensity;
+	//po->intensity = 1.0;
 }
 
 //点转移到局部坐标系下
@@ -209,6 +208,24 @@ int main(int argc, char **argv)
 
 	ros::Publisher pubLaserAfterMappedPath = nh.advertise<nav_msgs::Path>("/aft_mapped_path", 100);
 
+	//debug
+
+	ros::Publisher pubCorner = nh.advertise<sensor_msgs::PointCloud2>("/mapping_corner", 100);
+
+	ros::Publisher pubUsedCorner = nh.advertise<sensor_msgs::PointCloud2>("/mapping_used_corner", 100);
+
+	ros::Publisher pubSurf = nh.advertise<sensor_msgs::PointCloud2>("/mapping_surf", 100);
+
+	ros::Publisher pubUsedSurf = nh.advertise<sensor_msgs::PointCloud2>("/mapping_used_surf", 100);
+
+	ros::Publisher pubMapCorner = nh.advertise<sensor_msgs::PointCloud2>("/mapping_map_corner", 100);
+
+	ros::Publisher pubMapSurf = nh.advertise<sensor_msgs::PointCloud2>("/mapping_map_surf", 100);
+
+	pcl::PointCloud<PointType> corner, surf;
+	pcl::PointCloud<PointType> usedCorner, usedSurf;
+	pcl::PointCloud<PointType> mapCorner, mapSurf;
+
 	nav_msgs::Path laserAfterMappedPath;
 
 	std::vector<int> pointSearchInd;
@@ -219,12 +236,12 @@ int main(int argc, char **argv)
 	//创建VoxelGrid滤波器（体素栅格滤波器）
 	pcl::VoxelGrid<PointType> downSizeFilterCorner;
 	//设置体素大小
-	downSizeFilterCorner.setLeafSize(0.2, 0.2, 0.2);
-	//downSizeFilterCorner.setLeafSize(0.4, 0.4, 0.4);
+	//downSizeFilterCorner.setLeafSize(0.2, 0.2, 0.2);
+	downSizeFilterCorner.setLeafSize(0.4, 0.4, 0.4);
 
 	pcl::VoxelGrid<PointType> downSizeFilterSurf;
-	downSizeFilterSurf.setLeafSize(0.4, 0.4, 0.4);
-	//downSizeFilterSurf.setLeafSize(0.8, 0.8, 0.8);
+	//downSizeFilterSurf.setLeafSize(0.4, 0.4, 0.4);
+	downSizeFilterSurf.setLeafSize(0.8, 0.8, 0.8);
 
 	//指针初始化
 	for (int i = 0; i < laserCloudNum; i++)
@@ -308,7 +325,7 @@ int main(int argc, char **argv)
 
 			//调整之后取值范围:3 < centerCubeI < 18， 3 < centerCubeJ < 18, 3 < centerCubeK < 18
 			//如果处于下边界，表明地图向负方向延伸的可能性比较大，则循环移位，将数组中心点向上边界调整一个单位
-			while (centerCubeI < 3)
+			while (centerCubeI < 2)
 			{
 				for (int j = 0; j < laserCloudHeight; j++)
 				{
@@ -343,7 +360,7 @@ int main(int argc, char **argv)
 			}
 
 			//如果处于上边界，表明地图向正方向延伸的可能性比较大，则循环移位，将数组中心点向下边界调整一个单位
-			while (centerCubeI >= laserCloudWidth - 3)
+			while (centerCubeI >= laserCloudWidth - 2)
 			{ //18
 				for (int j = 0; j < laserCloudHeight; j++)
 				{
@@ -375,7 +392,7 @@ int main(int argc, char **argv)
 				laserCloudCenWidth--;
 			}
 
-			while (centerCubeJ < 3)
+			while (centerCubeJ < 2)
 			{
 				for (int i = 0; i < laserCloudWidth; i++)
 				{
@@ -407,7 +424,7 @@ int main(int argc, char **argv)
 				laserCloudCenHeight++;
 			}
 
-			while (centerCubeJ >= laserCloudHeight - 3)
+			while (centerCubeJ >= laserCloudHeight - 2)
 			{
 				for (int i = 0; i < laserCloudWidth; i++)
 				{
@@ -439,7 +456,7 @@ int main(int argc, char **argv)
 				laserCloudCenHeight--;
 			}
 
-			while (centerCubeK < 3)
+			while (centerCubeK < 1)
 			{
 				for (int i = 0; i < laserCloudWidth; i++)
 				{
@@ -471,7 +488,7 @@ int main(int argc, char **argv)
 				laserCloudCenDepth++;
 			}
 
-			while (centerCubeK >= laserCloudDepth - 3)
+			while (centerCubeK >= laserCloudDepth - 1)
 			{
 				for (int i = 0; i < laserCloudWidth; i++)
 				{
@@ -520,7 +537,7 @@ int main(int argc, char **argv)
 			{
 				for (int j = centerCubeJ - 2; j <= centerCubeJ + 2; j++)
 				{
-					for (int k = centerCubeK - 2; k <= centerCubeK + 2; k++)
+					for (int k = centerCubeK - 1; k <= centerCubeK + 1; k++)
 					{
 						if (i >= 0 && i < laserCloudWidth &&
 							j >= 0 && j < laserCloudHeight &&
@@ -560,7 +577,7 @@ int main(int argc, char **argv)
 										{
 											angle = 90 - theta;
 										}
-										if(angle < 30)
+										if(angle < 40)
 											isInLaserFOV = true;
 									}
 								}
@@ -604,7 +621,7 @@ int main(int argc, char **argv)
 			int laserCloudSurfStackNum = laserCloudSurfStack->points.size();
 
 			printf("map prepare time %f ms\n", t_shift.toc());
-			//printf("map corner num %d  surf num %d \n", laserCloudCornerFromMapNum, laserCloudSurfFromMapNum);
+			printf("map corner num %d  surf num %d \n", laserCloudCornerFromMapNum, laserCloudSurfFromMapNum);
 			if (laserCloudCornerFromMapNum > 10 && laserCloudSurfFromMapNum > 50)
 			{
 				TicToc t_opt;
@@ -628,14 +645,28 @@ int main(int argc, char **argv)
 					TicToc t_data;
 					int corner_num = 0;
 
+					//debug
+					usedCorner.clear();
+					usedSurf.clear();
+
+					int xLine = 0;
+					int yLine = 0;
+					int zLine = 0;
+					int xPlane = 0;
+					int yPlane = 0;
+					int zPlane = 0;
+					Eigen::Vector3d xNorm(1, 0, 0);
+					Eigen::Vector3d yNorm(0, 1, 0);
+					Eigen::Vector3d zNorm(0, 0, 1);
 					for (int i = 0; i < laserCloudCornerStackNum; i++)
 					{
 						pointOri = laserCloudCornerStack->points[i];
+						double sqrtDis = pointOri.x * pointOri.x + pointOri.y * pointOri.y + pointOri.z * pointOri.z;
 						//转换回世界坐标系
 						pointAssociateToMap(&pointOri, &pointSel);
 						kdtreeCornerFromMap->nearestKSearch(pointSel, 5, pointSearchInd, pointSearchSqDis); //寻找最近距离五个点
 
-						if (pointSearchSqDis[4] < 1.0)
+						if (pointSearchSqDis[4] < sqrtDis * 0.01)
 						{ //5个点中最大距离不超过1才处理
 							std::vector<Eigen::Vector3d> nearCorners;
 							Eigen::Vector3d center(0, 0, 0);
@@ -664,13 +695,11 @@ int main(int argc, char **argv)
 
 							// if is indeed line feature
 							// note Eigen library sort eigenvalues in increasing order
+							Eigen::Vector3d unit_direction = saes.eigenvectors().col(2);
+							Eigen::Vector3d curr_point(pointOri.x, pointOri.y, pointOri.z);
 							if (saes.eigenvalues()[2] > 3 * saes.eigenvalues()[1])
 							{ //如果最大的特征值大于第二大的特征值三倍以上
-
-								Eigen::Vector3d curr_point(pointOri.x, pointOri.y, pointOri.z);
-								Eigen::Vector3d unit_direction = saes.eigenvectors().col(2);
 								Eigen::Vector3d point_on_line = center;
-
 								Eigen::Vector3d point_a, point_b;
 								point_a = 0.1 * unit_direction + point_on_line;
 								point_b = -0.1 * unit_direction + point_on_line;
@@ -678,7 +707,34 @@ int main(int argc, char **argv)
 								ceres::CostFunction *cost_function = LidarEdgeFactor::Create(curr_point, point_a, point_b, 1.0);
 								problem.AddResidualBlock(cost_function, loss_function, parameters, parameters + 4);
 								corner_num++;
+								usedCorner.push_back(pointOri);
+
+								if(fabs(xNorm.dot(unit_direction))> 0.866)
+									xLine++;
+								if(fabs(yNorm.dot(unit_direction)) > 0.866)
+									yLine++;
+								if(fabs(zNorm.dot(unit_direction)) > 0.866)
+									zLine++;	
 							}
+							else
+							{
+								//ceres::CostFunction *cost_function = LidarDistanceFactor::Create(curr_point, center);
+								//problem.AddResidualBlock(cost_function, loss_function, parameters, parameters + 4);
+							}
+
+							
+							/*
+							double ave_d = 0;
+							for (int j = 0; j < 5; j++)
+							{
+								Eigen::Vector3d oa = nearCorners[j] - center;
+								double d = sqrt( oa.norm() * oa.norm() - oa.dot(unit_direction) * oa.dot(unit_direction));
+								//printf("oa %f %f %f d %f\n", oa.x(), oa.y(), oa.z(),d);
+								ave_d += d;
+							}
+							ave_d = ave_d / 5;
+							printf("ave d %f  ev 2 %f ev 1 %f ev2/ev1 %f \n", ave_d, saes.eigenvalues()[2], saes.eigenvalues()[1],  saes.eigenvalues()[2]/ saes.eigenvalues()[1]);
+							*/
 						}
 					}
 
@@ -686,13 +742,23 @@ int main(int argc, char **argv)
 					for (int i = 0; i < laserCloudSurfStackNum; i++)
 					{
 						pointOri = laserCloudSurfStack->points[i];
+						double sqrtDis = pointOri.x * pointOri.x + pointOri.y * pointOri.y + pointOri.z * pointOri.z;
 						pointAssociateToMap(&pointOri, &pointSel);
 						kdtreeSurfFromMap->nearestKSearch(pointSel, 5, pointSearchInd, pointSearchSqDis);
 
 						Eigen::Matrix<double, 5, 3> matA0;
 						Eigen::Matrix<double, 5, 1> matB0 = -1 * Eigen::Matrix<double, 5, 1>::Ones();
-						if (pointSearchSqDis[4] < 1.0)
+						if (pointSearchSqDis[4] < sqrtDis * 0.01)
 						{
+							Eigen::Vector3d center(0, 0, 0);
+							for (int j = 0; j < 5; j++)
+							{
+								Eigen::Vector3d tmp(laserCloudSurfFromMap->points[pointSearchInd[j]].x,
+													laserCloudSurfFromMap->points[pointSearchInd[j]].y,
+													laserCloudSurfFromMap->points[pointSearchInd[j]].z);
+								center = center + tmp;
+							}
+							center = center / 5.0;
 							//构建五个最近点的坐标矩阵
 							for (int j = 0; j < 5; j++)
 							{
@@ -724,33 +790,51 @@ int main(int argc, char **argv)
 									break;
 								}
 							}
-
+							Eigen::Vector3d curr_point(pointOri.x, pointOri.y, pointOri.z);
 							if (planeValid)
 							{
-								Eigen::Vector3d curr_point(pointOri.x, pointOri.y, pointOri.z);
 								ceres::CostFunction *cost_function = LidarPlaneNormFactor::Create(curr_point, norm, negative_OA_dot_norm);
 								problem.AddResidualBlock(cost_function, loss_function, parameters, parameters + 4);
 								surf_num++;
+								usedSurf.push_back(pointOri);
+
+								if(fabs(xNorm.dot(norm)) > 0.866)
+									xPlane++;
+								if(fabs(yNorm.dot(norm)) > 0.866)
+									yPlane++;
+								if(fabs(zNorm.dot(norm)) > 0.866)
+									zPlane++; 
 							}
+							else
+							{
+								//ceres::CostFunction *cost_function = LidarDistanceFactor::Create(curr_point, center);
+								//problem.AddResidualBlock(cost_function, loss_function, parameters, parameters + 4);
+							}
+
 						}
 					}
 
+					printf("corner num %d used corner num %d \n", laserCloudCornerStackNum, corner_num);
+					printf("surf num %d used surf num %d \n", laserCloudSurfStackNum, surf_num);
+
 					printf("mapping data assosiation time %f ms \n", t_data.toc());
+
+					printf("x line %d y line % d zline %d \n", xLine, yLine, zLine);
+					printf("x plane %d y plane %d z plane %d \n", xPlane, yPlane, zPlane);
 
 					TicToc t_solver;
 					ceres::Solver::Options options;
 					options.linear_solver_type = ceres::DENSE_QR;
-					options.max_num_iterations = 5;
+					options.max_num_iterations = 4;
 					options.minimizer_progress_to_stdout = false;
 					options.check_gradients = false;
 					options.gradient_check_relative_precision = 1e-4;
 					ceres::Solver::Summary summary;
 					ceres::Solve(options, &problem, &summary);
-
 					printf("mapping solver time %f ms \n", t_solver.toc());
 
 					//printf("time %f \n", timeLaserOdometry);
-					printf("corner factor num %d surf factor num %d\n", corner_num, surf_num);
+					//printf("corner factor num %d surf factor num %d\n", corner_num, surf_num);
 					//printf("result q %f %f %f %f result t %f %f %f\n", parameters[3], parameters[0], parameters[1], parameters[2],
 					//	   parameters[4], parameters[5], parameters[6]);
 				}
@@ -817,7 +901,6 @@ int main(int argc, char **argv)
 					laserCloudSurfArray[cubeInd]->push_back(pointSel);
 				}
 			}
-
 			printf("add points time %f ms\n", t_add.toc());
 
 			TicToc t_filter;
@@ -833,6 +916,86 @@ int main(int argc, char **argv)
 				downSizeFilterSurf.filter(*laserCloudSurfArray[ind]);
 			}
 			printf("filter time %f ms \n", t_filter.toc());
+
+			//debug
+			{
+				// pub used corner in one frame
+				for(int i = 0; i < usedCorner.points.size(); i++)
+				{
+					pointAssociateToMap(&usedCorner.points[i], &usedCorner.points[i]);
+				}
+				sensor_msgs::PointCloud2 usedCornerMsg;
+				pcl::toROSMsg(usedCorner, usedCornerMsg);
+				usedCornerMsg.header.stamp = ros::Time().fromSec(timeLaserOdometry);
+				usedCornerMsg.header.frame_id = "/camera_init";
+				pubUsedCorner.publish(usedCornerMsg);
+
+				// pub used surf in one frame
+				for(int i = 0; i < usedSurf.points.size(); i++)
+				{
+					pointAssociateToMap(&usedSurf.points[i], &usedSurf.points[i]);
+				}
+				sensor_msgs::PointCloud2 usedSurfMsg;
+				pcl::toROSMsg(usedSurf, usedSurfMsg);
+				usedSurfMsg.header.stamp = ros::Time().fromSec(timeLaserOdometry);
+				usedSurfMsg.header.frame_id = "/camera_init";
+				pubUsedSurf.publish(usedSurfMsg);
+
+
+				corner.clear();
+				surf.clear();
+				// pub corner in one frame
+				for (int i = 0; i < laserCloudCornerStackNum; i++)
+				{
+					PointType pointSel;
+					pointAssociateToMap(&laserCloudCornerStack->points[i], &pointSel);
+					corner.push_back(pointSel);
+				}
+				sensor_msgs::PointCloud2 CornerMsg;
+				pcl::toROSMsg(corner, CornerMsg);
+				CornerMsg.header.stamp = ros::Time().fromSec(timeLaserOdometry);
+				CornerMsg.header.frame_id = "/camera_init";
+				pubCorner.publish(CornerMsg);
+
+				// pub surf in one frame
+				for (int i = 0; i < laserCloudSurfStackNum; i++)
+				{
+					PointType pointSel;
+					pointAssociateToMap(&laserCloudSurfStack->points[i], &pointSel);
+					surf.push_back(pointSel);
+				}
+				sensor_msgs::PointCloud2 SurfMsg;
+				pcl::toROSMsg(surf, SurfMsg);
+				SurfMsg.header.stamp = ros::Time().fromSec(timeLaserOdometry);
+				SurfMsg.header.frame_id = "/camera_init";
+				pubSurf.publish(SurfMsg);
+
+				mapCorner.clear();
+				mapSurf.clear();
+				// pub surround corners
+				int laserCloudCornerFromMapNum = laserCloudCornerFromMap->points.size();
+				for(int i = 0; i < laserCloudCornerFromMapNum; i++)
+				{
+					mapCorner.push_back(laserCloudCornerFromMap->points[i]);
+				}
+				sensor_msgs::PointCloud2 mapCornerMsg;
+				pcl::toROSMsg(mapCorner, mapCornerMsg);
+				mapCornerMsg.header.stamp = ros::Time().fromSec(timeLaserOdometry);
+				mapCornerMsg.header.frame_id = "/camera_init";
+				pubMapCorner.publish(mapCornerMsg);
+
+				// pub surround surfs
+				int laserCloudSurfFromMapNum = laserCloudSurfFromMap->points.size();
+				for(int i = 0; i < laserCloudSurfFromMapNum; i++)
+				{
+					mapSurf.push_back(laserCloudSurfFromMap->points[i]);
+				}
+				sensor_msgs::PointCloud2 mapSurfMsg;
+				pcl::toROSMsg(mapSurf, mapSurfMsg);
+				mapSurfMsg.header.stamp = ros::Time().fromSec(timeLaserOdometry);
+				mapSurfMsg.header.frame_id = "/camera_init";
+				pubMapSurf.publish(mapSurfMsg);
+			}
 
 			TicToc t_pub;
 			//特征点汇总下采样，每隔五帧publish一次，从第一次开始

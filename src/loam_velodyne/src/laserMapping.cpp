@@ -54,6 +54,8 @@ backward::SignalHandling sh;
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
 
+#include "loam_velodyne/tic_toc.h"
+
 //扫描周期
 const float scanPeriod = 0.1;
 
@@ -487,6 +489,7 @@ int main(int argc, char** argv)
       newLaserOdometry = false;
 
       frameCount++;
+      TicToc t_whole;
       //控制跳帧数，>=这里实际并没有跳帧，只取>或者增大stackFrameNum才能实现相应的跳帧处理
       if (frameCount >= stackFrameNum) {
         //获取世界坐标系转换矩阵
@@ -806,9 +809,11 @@ int main(int argc, char** argv)
         laserCloudSurfStack2->clear();
 
         if (laserCloudCornerFromMapNum > 10 && laserCloudSurfFromMapNum > 100) {
+          TicToc t_tree;
           kdtreeCornerFromMap->setInputCloud(laserCloudCornerFromMap);//构建kd-tree
           kdtreeSurfFromMap->setInputCloud(laserCloudSurfFromMap);
-
+          printf("mapping build tree time %f ms \n", t_tree.toc());
+          TicToc t_opt;
           for (int iterCount = 0; iterCount < 10; iterCount++) {//最多迭代10次
             laserCloudOri->clear();
             coeffSel->clear();
@@ -1088,7 +1093,7 @@ int main(int argc, char** argv)
               break;
             }
           }
-
+          printf("mapping opt time %f ms \n", t_opt.toc());
           //迭代结束更新相关的转移矩阵
           transformUpdate();
         }
@@ -1228,6 +1233,7 @@ int main(int argc, char** argv)
         tfBroadcaster.sendTransform(aftMappedTrans);
 
       }
+      printf("mapping whole time %f ms \n", t_whole.toc());
     }
 
     status = ros::ok();

@@ -47,6 +47,8 @@
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
 
+#include "loam_velodyne/tic_toc.h"
+
 //一个点云周期
 const float scanPeriod = 0.1;
 
@@ -525,12 +527,13 @@ int main(int argc, char** argv)
         systemInited = true;
         continue;
       }
-
+      TicToc t_whole;
       //T平移量的初值赋值为加减速的位移量，为其梯度下降的方向（沿用上次转换的T（一个sweep匀速模型），同时在其基础上减去匀速运动位移，即只考虑加减速的位移量）
       transform[3] -= imuVeloFromStartX * scanPeriod;
       transform[4] -= imuVeloFromStartY * scanPeriod;
       transform[5] -= imuVeloFromStartZ * scanPeriod;
 
+      TicToc t_opt;
       if (laserCloudCornerLastNum > 10 && laserCloudSurfLastNum > 100) {
         std::vector<int> indices;
         //pcl::removeNaNFromPointCloud(*cornerPointsSharp,*cornerPointsSharp, indices);
@@ -960,7 +963,7 @@ int main(int argc, char** argv)
           }
         }
       }
-
+      printf("odometry opt time %f ms \n", t_opt.toc());
       float rx, ry, rz, tx, ty, tz;
       //求相对于原点的旋转量,垂直方向上1.05倍修正?
       AccumulateRotation(transformSum[0], transformSum[1], transformSum[2], 
@@ -1080,6 +1083,7 @@ int main(int argc, char** argv)
         laserCloudFullRes3.header.frame_id = "/camera";
         pubLaserCloudFullRes.publish(laserCloudFullRes3);
       }
+      printf("odometry whole time %f ms \n", t_whole.toc());
     }
 
     status = ros::ok();
