@@ -96,8 +96,6 @@ ros::Publisher pubCornerPointsLessSharp;
 ros::Publisher pubSurfPointsFlat;
 ros::Publisher pubSurfPointsLessFlat;
 
-std::vector<ros::Publisher> pubEachScan;
-
 // Tong add
 template <typename PointT>
 void removeZeroFromPointCloud(const pcl::PointCloud<PointT> &cloud_in,
@@ -153,8 +151,6 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
     std::vector<int> scanStartInd(N_SCANS, 0);
     std::vector<int> scanEndInd(N_SCANS, 0);
 
-    //当前点云时间
-    double timeScanCur = laserCloudMsg->header.stamp.toSec();
     pcl::PointCloud<pcl::PointXYZ> laserCloudIn;
     //消息转换成pcl数据存放
     pcl::fromROSMsg(*laserCloudMsg, laserCloudIn);
@@ -307,7 +303,6 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
     printf("prepare time %f \n", t_prepare.toc());
 
     TicToc t_curve;
-    int scanCount = -1;
     for (int i = 5; i < cloudSize - 5; i++)
     { //使用每个点的前后五个点计算曲率，因此前五个与最后五个点跳过
         float diffX = laserCloud->points[i - 5].x + laserCloud->points[i - 4].x + laserCloud->points[i - 3].x + laserCloud->points[i - 2].x + laserCloud->points[i - 1].x - 10 * laserCloud->points[i].x + laserCloud->points[i + 1].x + laserCloud->points[i + 2].x + laserCloud->points[i + 3].x + laserCloud->points[i + 4].x + laserCloud->points[i + 5].x;
@@ -588,26 +583,25 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
     surfPointsLessFlat2.header.frame_id = "/camera";
     pubSurfPointsLessFlat.publish(surfPointsLessFlat2);
 
-    // pub each scan for visualization
-    if(0)
-    {
-        for (int i = 0; i < N_SCANS; i++)
-        {
-            sensor_msgs::PointCloud2 scanMsg;
-            pcl::toROSMsg(laserCloudScans[i], scanMsg);
-            scanMsg.header.stamp = laserCloudMsg->header.stamp;
-            scanMsg.header.frame_id = "/camera_init";
-            pubEachScan[i].publish(scanMsg);
-        }
-    }
-
     printf("scan registration time %f ms *************\n", t_whole.toc());
+    if(t_whole.toc() > 100)
+        ROS_WARN("scan registration process over 100ms");
 }
 
 int main(int argc, char **argv)
 {
     ros::init(argc, argv, "scanRegistration");
     ros::NodeHandle nh;
+
+    nh.param<int>("scan_line", N_SCANS, 16);
+
+    printf("scan line number %d \n", N_SCANS);
+
+    if(N_SCANS != 16 && N_SCANS != 64)
+    {
+        printf("only support velodyne with 16 or 64 scan line!");
+        return 0;
+    }
 
     ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 100, laserCloudHandler);
 
@@ -620,12 +614,6 @@ int main(int argc, char **argv)
     pubSurfPointsFlat = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_flat", 100);
 
     pubSurfPointsLessFlat = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_less_flat", 100);
-
-    for(int i = 0; i < N_SCANS; i++)
-    {
-        ros::Publisher pubScan = nh.advertise<sensor_msgs::PointCloud2>("/velodyne_scan_" + std::to_string(i), 100);
-        pubEachScan.push_back(pubScan);
-    }
 
     ros::spin();
 

@@ -19,6 +19,9 @@
 #include <ceres/ceres.h>
 #include <mutex>
 #include <queue>
+#include <thread>
+#include <iostream>
+#include <string>
 
 #include "lidarFactor_v6.cpp"
 #include "loam_velodyne/common.h"
@@ -31,11 +34,10 @@ namespace backward
 backward::SignalHandling sh;
 } // namespace backward
 
-//扫描周期
-const float scanPeriod = 0.1;
 
-//控制处理得到的点云map，每隔几次publich给rviz显示
-const int mapFrameNum = 5;
+int frameCount = 0;
+
+std::string outputFile;
 
 //时间戳
 double timeLaserCloudCornerLast = 0;
@@ -43,22 +45,22 @@ double timeLaserCloudSurfLast = 0;
 double timeLaserCloudFullRes = 0;
 double timeLaserOdometry = 0;
 
-/*
+
 int laserCloudCenWidth = 10;
 int laserCloudCenHeight = 10;
 int laserCloudCenDepth = 5;
 const int laserCloudWidth = 21;
 const int laserCloudHeight = 21;
 const int laserCloudDepth = 11;
-*/
 
+/*
 int laserCloudCenWidth = 2;
 int laserCloudCenHeight = 2;
 int laserCloudCenDepth = 1;
 const int laserCloudWidth = 5;
 const int laserCloudHeight = 5;
 const int laserCloudDepth = 3;
-
+*/
 
 //点云方块集合最大数量
 const int laserCloudNum = laserCloudWidth * laserCloudHeight * laserCloudDepth; //4851
@@ -94,18 +96,19 @@ pcl::PointCloud<PointType>::Ptr laserCloudSurfArray[laserCloudNum];
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeCornerFromMap(new pcl::KdTreeFLANN<PointType>());
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeSurfFromMap(new pcl::KdTreeFLANN<PointType>());
 
-Eigen::Quaterniond q_w_curr_tilde(1, 0, 0, 0);
-Eigen::Vector3d t_w_curr_tilde(0, 0, 0);
-
 double parameters[7] = {0, 0, 0, 1, 0, 0, 0};
 Eigen::Map<Eigen::Quaterniond> q_w_curr(parameters);
 Eigen::Map<Eigen::Vector3d> t_w_curr(parameters + 4);
 
-Eigen::Quaterniond q_w_last_tilde(1, 0, 0, 0);
-Eigen::Vector3d t_w_last_tilde(0, 0, 0);
 
-Eigen::Quaterniond q_w_last(1, 0, 0, 0);
-Eigen::Vector3d t_w_last(0, 0, 0);
+// wmap_T_odom * odom_T_curr = wmap_T_curr;
+// transformation between odom's world and map's world frame
+Eigen::Quaterniond q_wmap_wodom(1, 0, 0, 0);
+Eigen::Vector3d t_wmap_wodom(0, 0, 0);
+
+Eigen::Quaterniond q_wodom_curr(1, 0, 0, 0);
+Eigen::Vector3d t_wodom_curr(0, 0, 0);
+
 
 std::queue<sensor_msgs::PointCloud2ConstPtr> cornerLastBuf;
 std::queue<sensor_msgs::PointCloud2ConstPtr> surfLastBuf;
@@ -113,23 +116,28 @@ std::queue<sensor_msgs::PointCloud2ConstPtr> fullResBuf;
 std::queue<nav_msgs::Odometry::ConstPtr> odometryBuf;
 std::mutex mBuf;
 
-//基于匀速模型，根据上次微调的结果和odometry这次与上次计算的结果，猜测一个新的世界坐标系的转换矩阵transformTobeMapped
+pcl::VoxelGrid<PointType> downSizeFilterCorner;
+pcl::VoxelGrid<PointType> downSizeFilterSurf;
+
+std::vector<int> pointSearchInd;
+std::vector<float> pointSearchSqDis;
+
+PointType pointOri, pointSel;
+
+ros::Publisher pubLaserCloudSurround, pubLaserCloudMap, pubLaserCloudFullRes, pubOdomAftMapped, pubLaserAfterMappedPath;
+
+nav_msgs::Path laserAfterMappedPath;
+
 void transformAssociateToMap()
 {
-	Eigen::Quaterniond q_rela = q_w_last_tilde.inverse() * q_w_curr_tilde;
-	Eigen::Vector3d t_rela = q_w_last_tilde.inverse() * (t_w_curr_tilde - t_w_last_tilde);
-
-	q_w_curr = q_w_last * q_rela;
-	t_w_curr = q_w_last * t_rela + t_w_last;
+	q_w_curr = q_wmap_wodom * q_wodom_curr;
+	t_w_curr = q_wmap_wodom * t_wodom_curr + t_wmap_wodom; 
 }
 
-//记录odometry发送的转换矩阵与mapping之后的转换矩阵，下一帧点云会使用(有IMU的话会使用IMU进行补偿)
 void transformUpdate()
 {
-	q_w_last_tilde = q_w_curr_tilde;
-	t_w_last_tilde = t_w_curr_tilde;
-	q_w_last = q_w_curr;
-	t_w_last = t_w_curr;
+	q_wmap_wodom = q_w_curr * q_wodom_curr.inverse();
+	t_wmap_wodom = t_w_curr - q_wmap_wodom * t_wodom_curr;
 }
 
 //根据调整计算后的转移矩阵，将点注册到全局世界坐标系下
@@ -179,92 +187,100 @@ void laserCloudFullResHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloud
 	mBuf.unlock();
 }
 
-//接收旋转平移信息
+//receive odomtry
 void laserOdometryHandler(const nav_msgs::Odometry::ConstPtr &laserOdometry)
 {
 	mBuf.lock();
 	odometryBuf.push(laserOdometry);
 	mBuf.unlock();
+
+	// local variable 
+	Eigen::Quaterniond q_wodom_curr;
+	Eigen::Vector3d t_wodom_curr;
+	q_wodom_curr.x() = laserOdometry->pose.pose.orientation.x;
+	q_wodom_curr.y() = laserOdometry->pose.pose.orientation.y;
+	q_wodom_curr.z() = laserOdometry->pose.pose.orientation.z;
+	q_wodom_curr.w() = laserOdometry->pose.pose.orientation.w;
+	t_wodom_curr.x() = laserOdometry->pose.pose.position.x;
+	t_wodom_curr.y() = laserOdometry->pose.pose.position.y;
+	t_wodom_curr.z() = laserOdometry->pose.pose.position.z;
+
+	Eigen::Quaterniond q_w_curr = q_wmap_wodom * q_wodom_curr;
+	Eigen::Vector3d t_w_curr = q_wmap_wodom * t_wodom_curr + t_wmap_wodom; 
+	Eigen::Matrix3d r_w_curr = q_w_curr.toRotationMatrix();
+
+	FILE* outFile;
+	outFile = fopen(outputFile.c_str(),"a");
+
+	fprintf (outFile, "%f %f %f %f %f %f %f %f %f %f %f %f \n",r_w_curr(0,0), r_w_curr(0,1), r_w_curr(0,2), t_w_curr.x(),
+															   r_w_curr(1,0), r_w_curr(1,1), r_w_curr(1,2), t_w_curr.y(),
+															   r_w_curr(2,0), r_w_curr(2,1), r_w_curr(2,2), t_w_curr.z());
+	fclose (outFile);
+
+	nav_msgs::Odometry odomAftMapped;
+	odomAftMapped.header.frame_id = "/camera_init";
+	odomAftMapped.child_frame_id = "/aft_mapped";
+	odomAftMapped.header.stamp = laserOdometry->header.stamp;
+	odomAftMapped.pose.pose.orientation.x = q_w_curr.x();
+	odomAftMapped.pose.pose.orientation.y = q_w_curr.y();
+	odomAftMapped.pose.pose.orientation.z = q_w_curr.z();
+	odomAftMapped.pose.pose.orientation.w = q_w_curr.w();
+	odomAftMapped.pose.pose.position.x = t_w_curr.x();
+	odomAftMapped.pose.pose.position.y = t_w_curr.y();
+	odomAftMapped.pose.pose.position.z = t_w_curr.z();
+	pubOdomAftMapped.publish(odomAftMapped);
+
+	geometry_msgs::PoseStamped laserAfterMappedPose;
+	laserAfterMappedPose.header = odomAftMapped.header;
+	laserAfterMappedPose.pose = odomAftMapped.pose.pose;
+	laserAfterMappedPath.header.stamp = odomAftMapped.header.stamp;
+	laserAfterMappedPath.header.frame_id = "/camera_init";
+	laserAfterMappedPath.poses.push_back(laserAfterMappedPose);
+	pubLaserAfterMappedPath.publish(laserAfterMappedPath);
+
+	//广播坐标系旋转平移参量
+	tf::TransformBroadcaster tfBroadcaster;
+	tf::StampedTransform aftMappedTrans;
+	aftMappedTrans.frame_id_ = "/camera_init";
+	aftMappedTrans.child_frame_id_ = "/aft_mapped";
+	aftMappedTrans.stamp_ = odomAftMapped.header.stamp;
+	aftMappedTrans.setRotation(tf::Quaternion(q_w_curr.x(), q_w_curr.y(), q_w_curr.z(), q_w_curr.w()));
+	aftMappedTrans.setOrigin(tf::Vector3(t_w_curr.x(), t_w_curr.y(), t_w_curr.z()));
+	tfBroadcaster.sendTransform(aftMappedTrans);
+
 }
 
-int main(int argc, char **argv)
+void process()
 {
-	ros::init(argc, argv, "laserMapping");
-	ros::NodeHandle nh;
-
-	ros::Subscriber subLaserCloudCornerLast = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_corner_last", 100, laserCloudCornerLastHandler);
-
-	ros::Subscriber subLaserCloudSurfLast = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_surf_last", 100, laserCloudSurfLastHandler);
-
-	ros::Subscriber subLaserOdometry = nh.subscribe<nav_msgs::Odometry>("/laser_odom_to_init", 100, laserOdometryHandler);
-
-	ros::Subscriber subLaserCloudFullRes = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_cloud_3", 100, laserCloudFullResHandler);
-
-	ros::Publisher pubLaserCloudSurround = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_surround", 100);
-
-	ros::Publisher pubLaserCloudFullRes = nh.advertise<sensor_msgs::PointCloud2>("/velodyne_cloud_registered", 100);
-
-	ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>("/aft_mapped_to_init", 100);
-
-	ros::Publisher pubLaserAfterMappedPath = nh.advertise<nav_msgs::Path>("/aft_mapped_path", 100);
-
-	//debug
-
-	ros::Publisher pubCorner = nh.advertise<sensor_msgs::PointCloud2>("/mapping_corner", 100);
-
-	ros::Publisher pubUsedCorner = nh.advertise<sensor_msgs::PointCloud2>("/mapping_used_corner", 100);
-
-	ros::Publisher pubSurf = nh.advertise<sensor_msgs::PointCloud2>("/mapping_surf", 100);
-
-	ros::Publisher pubUsedSurf = nh.advertise<sensor_msgs::PointCloud2>("/mapping_used_surf", 100);
-
-	ros::Publisher pubMapCorner = nh.advertise<sensor_msgs::PointCloud2>("/mapping_map_corner", 100);
-
-	ros::Publisher pubMapSurf = nh.advertise<sensor_msgs::PointCloud2>("/mapping_map_surf", 100);
-
-	pcl::PointCloud<PointType> corner, surf;
-	pcl::PointCloud<PointType> usedCorner, usedSurf;
-	pcl::PointCloud<PointType> mapCorner, mapSurf;
-
-	nav_msgs::Path laserAfterMappedPath;
-
-	std::vector<int> pointSearchInd;
-	std::vector<float> pointSearchSqDis;
-
-	PointType pointOri, pointSel;
-
-	//创建VoxelGrid滤波器（体素栅格滤波器）
-	pcl::VoxelGrid<PointType> downSizeFilterCorner;
-	//设置体素大小
-	//downSizeFilterCorner.setLeafSize(0.2, 0.2, 0.2);
-	downSizeFilterCorner.setLeafSize(0.4, 0.4, 0.4);
-
-	pcl::VoxelGrid<PointType> downSizeFilterSurf;
-	//downSizeFilterSurf.setLeafSize(0.4, 0.4, 0.4);
-	downSizeFilterSurf.setLeafSize(0.8, 0.8, 0.8);
-
-	//指针初始化
-	for (int i = 0; i < laserCloudNum; i++)
+	while(1)
 	{
-		laserCloudCornerArray[i].reset(new pcl::PointCloud<PointType>());
-		laserCloudSurfArray[i].reset(new pcl::PointCloud<PointType>());
-	}
-
-	int frameCount = 0;
-	ros::Rate rate(100);
-	bool status = ros::ok();
-	while (status)
-	{
-		ros::spinOnce();
-
-		if (!cornerLastBuf.empty() && !surfLastBuf.empty() &&
+		while (!cornerLastBuf.empty() && !surfLastBuf.empty() &&
 			!fullResBuf.empty() && !odometryBuf.empty())
 		{
 			mBuf.lock();
 			while (!odometryBuf.empty() && odometryBuf.front()->header.stamp.toSec() < cornerLastBuf.front()->header.stamp.toSec())
 				odometryBuf.pop();
 			if (odometryBuf.empty())
-				continue;
+			{
+				mBuf.unlock();
+				break;
+			}
+
+			while (!surfLastBuf.empty() && surfLastBuf.front()->header.stamp.toSec() < cornerLastBuf.front()->header.stamp.toSec())
+				surfLastBuf.pop();
+			if (surfLastBuf.empty())
+			{
+				mBuf.unlock();
+				break;
+			}
+
+			while (!fullResBuf.empty() && fullResBuf.front()->header.stamp.toSec() < cornerLastBuf.front()->header.stamp.toSec())
+				fullResBuf.pop();
+			if (fullResBuf.empty())
+			{
+				mBuf.unlock();
+				break;
+			}
 
 			timeLaserCloudCornerLast = cornerLastBuf.front()->header.stamp.toSec();
 			timeLaserCloudSurfLast = surfLastBuf.front()->header.stamp.toSec();
@@ -277,7 +293,8 @@ int main(int argc, char **argv)
 			{
 				printf("time corner %f surf %f full %f odom %f \n", timeLaserCloudCornerLast, timeLaserCloudSurfLast, timeLaserCloudFullRes, timeLaserOdometry);
 				printf("unsync messeage!");
-				ROS_BREAK();
+				mBuf.unlock();
+				break;
 			}
 
 			laserCloudCornerLast->clear();
@@ -292,14 +309,20 @@ int main(int argc, char **argv)
 			pcl::fromROSMsg(*fullResBuf.front(), *laserCloudFullRes);
 			fullResBuf.pop();
 
-			q_w_curr_tilde.x() = odometryBuf.front()->pose.pose.orientation.x;
-			q_w_curr_tilde.y() = odometryBuf.front()->pose.pose.orientation.y;
-			q_w_curr_tilde.z() = odometryBuf.front()->pose.pose.orientation.z;
-			q_w_curr_tilde.w() = odometryBuf.front()->pose.pose.orientation.w;
-			t_w_curr_tilde.x() = odometryBuf.front()->pose.pose.position.x;
-			t_w_curr_tilde.y() = odometryBuf.front()->pose.pose.position.y;
-			t_w_curr_tilde.z() = odometryBuf.front()->pose.pose.position.z;
+			q_wodom_curr.x() = odometryBuf.front()->pose.pose.orientation.x;
+			q_wodom_curr.y() = odometryBuf.front()->pose.pose.orientation.y;
+			q_wodom_curr.z() = odometryBuf.front()->pose.pose.orientation.z;
+			q_wodom_curr.w() = odometryBuf.front()->pose.pose.orientation.w;
+			t_wodom_curr.x() = odometryBuf.front()->pose.pose.position.x;
+			t_wodom_curr.y() = odometryBuf.front()->pose.pose.position.y;
+			t_wodom_curr.z() = odometryBuf.front()->pose.pose.position.z;
 			odometryBuf.pop();
+
+			while(!cornerLastBuf.empty())
+			{
+				cornerLastBuf.pop();
+				ROS_WARN("drop lidar frame in mapping for real time performance, please increase skip number or decrease resolution");
+			}
 
 			mBuf.unlock();
 
@@ -325,7 +348,7 @@ int main(int argc, char **argv)
 
 			//调整之后取值范围:3 < centerCubeI < 18， 3 < centerCubeJ < 18, 3 < centerCubeK < 18
 			//如果处于下边界，表明地图向负方向延伸的可能性比较大，则循环移位，将数组中心点向上边界调整一个单位
-			while (centerCubeI < 2)
+			while (centerCubeI < 3)
 			{
 				for (int j = 0; j < laserCloudHeight; j++)
 				{
@@ -360,7 +383,7 @@ int main(int argc, char **argv)
 			}
 
 			//如果处于上边界，表明地图向正方向延伸的可能性比较大，则循环移位，将数组中心点向下边界调整一个单位
-			while (centerCubeI >= laserCloudWidth - 2)
+			while (centerCubeI >= laserCloudWidth - 3)
 			{ //18
 				for (int j = 0; j < laserCloudHeight; j++)
 				{
@@ -392,7 +415,7 @@ int main(int argc, char **argv)
 				laserCloudCenWidth--;
 			}
 
-			while (centerCubeJ < 2)
+			while (centerCubeJ < 3)
 			{
 				for (int i = 0; i < laserCloudWidth; i++)
 				{
@@ -424,7 +447,7 @@ int main(int argc, char **argv)
 				laserCloudCenHeight++;
 			}
 
-			while (centerCubeJ >= laserCloudHeight - 2)
+			while (centerCubeJ >= laserCloudHeight - 3)
 			{
 				for (int i = 0; i < laserCloudWidth; i++)
 				{
@@ -456,7 +479,7 @@ int main(int argc, char **argv)
 				laserCloudCenHeight--;
 			}
 
-			while (centerCubeK < 1)
+			while (centerCubeK < 3)
 			{
 				for (int i = 0; i < laserCloudWidth; i++)
 				{
@@ -488,7 +511,7 @@ int main(int argc, char **argv)
 				laserCloudCenDepth++;
 			}
 
-			while (centerCubeK >= laserCloudDepth - 1)
+			while (centerCubeK >= laserCloudDepth - 3)
 			{
 				for (int i = 0; i < laserCloudWidth; i++)
 				{
@@ -520,13 +543,6 @@ int main(int argc, char **argv)
 				laserCloudCenDepth--;
 			}
 
-			PointType pointOnYAxis;
-			pointOnYAxis.x = 0.0;
-			pointOnYAxis.y = 0.0;
-			pointOnYAxis.z = 10.0;
-			//获取y方向上10米高位置的点在世界坐标系下的坐标
-			pointAssociateToMap(&pointOnYAxis, &pointOnYAxis);
-
 			int laserCloudValidNum = 0;
 			int laserCloudSurroundNum = 0;
 			//在每一维附近5个cube(前2个，后2个，中间1个)里进行查找（前后250米范围内，总共500米范围），三个维度总共125个cube
@@ -543,52 +559,8 @@ int main(int argc, char **argv)
 							j >= 0 && j < laserCloudHeight &&
 							k >= 0 && k < laserCloudDepth)
 						{ //如果索引合法
-
-							//换算成实际比例，在世界坐标系下的坐标
-							float centerX = 50.0 * (i - laserCloudCenWidth);
-							float centerY = 50.0 * (j - laserCloudCenHeight);
-							float centerZ = 50.0 * (k - laserCloudCenDepth);
-
-							bool isInLaserFOV = false; //判断是否在lidar视线范围的标志（Field of View）
-							for (int ii = -1; ii <= 1; ii += 2)
-							{
-								if(isInLaserFOV)
-									break;
-								for (int jj = -1; jj <= 1; jj += 2)
-								{
-									if(isInLaserFOV)
-										break;
-									for (int kk = -1; kk <= 1; kk += 2)
-									{
-										if(isInLaserFOV)
-											break;
-										//上下左右八个顶点坐标
-										float cornerX = centerX + 25.0 * ii;
-										float cornerY = centerY + 25.0 * jj;
-										float cornerZ = centerZ + 25.0 * kk;
-										
-										Eigen::Vector3d oa(t_w_curr.x() - cornerX, t_w_curr.y() - cornerY, t_w_curr.z() - cornerZ);
-										Eigen::Vector3d ob(t_w_curr.x() - pointOnYAxis.x, t_w_curr.y() - pointOnYAxis.y, t_w_curr.z() - pointOnYAxis.z);
-										double theta = acos(oa.dot(ob) / (oa.norm() * ob.norm())) / 3.1415 * 180;
-										double angle = 0;
-										if(theta > 90)
-											angle = theta - 90;
-										else
-										{
-											angle = 90 - theta;
-										}
-										if(angle < 40)
-											isInLaserFOV = true;
-									}
-								}
-							}
-
-							//记住视域范围内的cube索引，匹配用
-							if (isInLaserFOV)
-							{
-								laserCloudValidInd[laserCloudValidNum] = i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k;
-								laserCloudValidNum++;
-							}
+							laserCloudValidInd[laserCloudValidNum] = i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k;
+							laserCloudValidNum++;
 							//记住附近所有cube的索引，显示用
 							laserCloudSurroundInd[laserCloudSurroundNum] = i + laserCloudWidth * j + laserCloudWidth * laserCloudHeight * k;
 							laserCloudSurroundNum++;
@@ -645,19 +617,6 @@ int main(int argc, char **argv)
 					TicToc t_data;
 					int corner_num = 0;
 
-					//debug
-					usedCorner.clear();
-					usedSurf.clear();
-
-					int xLine = 0;
-					int yLine = 0;
-					int zLine = 0;
-					int xPlane = 0;
-					int yPlane = 0;
-					int zPlane = 0;
-					Eigen::Vector3d xNorm(1, 0, 0);
-					Eigen::Vector3d yNorm(0, 1, 0);
-					Eigen::Vector3d zNorm(0, 0, 1);
 					for (int i = 0; i < laserCloudCornerStackNum; i++)
 					{
 						pointOri = laserCloudCornerStack->points[i];
@@ -675,8 +634,8 @@ int main(int argc, char **argv)
 								Eigen::Vector3d tmp(laserCloudCornerFromMap->points[pointSearchInd[j]].x,
 													laserCloudCornerFromMap->points[pointSearchInd[j]].y,
 													laserCloudCornerFromMap->points[pointSearchInd[j]].z);
-								nearCorners.push_back(tmp);
 								center = center + tmp;
+								nearCorners.push_back(tmp);
 							}
 							center = center / 5.0;
 
@@ -706,35 +665,8 @@ int main(int argc, char **argv)
 
 								ceres::CostFunction *cost_function = LidarEdgeFactor::Create(curr_point, point_a, point_b, 1.0);
 								problem.AddResidualBlock(cost_function, loss_function, parameters, parameters + 4);
-								corner_num++;
-								usedCorner.push_back(pointOri);
-
-								if(fabs(xNorm.dot(unit_direction))> 0.866)
-									xLine++;
-								if(fabs(yNorm.dot(unit_direction)) > 0.866)
-									yLine++;
-								if(fabs(zNorm.dot(unit_direction)) > 0.866)
-									zLine++;	
+								corner_num++;	
 							}
-							else
-							{
-								//ceres::CostFunction *cost_function = LidarDistanceFactor::Create(curr_point, center);
-								//problem.AddResidualBlock(cost_function, loss_function, parameters, parameters + 4);
-							}
-
-							
-							/*
-							double ave_d = 0;
-							for (int j = 0; j < 5; j++)
-							{
-								Eigen::Vector3d oa = nearCorners[j] - center;
-								double d = sqrt( oa.norm() * oa.norm() - oa.dot(unit_direction) * oa.dot(unit_direction));
-								//printf("oa %f %f %f d %f\n", oa.x(), oa.y(), oa.z(),d);
-								ave_d += d;
-							}
-							ave_d = ave_d / 5;
-							printf("ave d %f  ev 2 %f ev 1 %f ev2/ev1 %f \n", ave_d, saes.eigenvalues()[2], saes.eigenvalues()[1],  saes.eigenvalues()[2]/ saes.eigenvalues()[1]);
-							*/
 						}
 					}
 
@@ -750,15 +682,6 @@ int main(int argc, char **argv)
 						Eigen::Matrix<double, 5, 1> matB0 = -1 * Eigen::Matrix<double, 5, 1>::Ones();
 						if (pointSearchSqDis[4] < sqrtDis * 0.01)
 						{
-							Eigen::Vector3d center(0, 0, 0);
-							for (int j = 0; j < 5; j++)
-							{
-								Eigen::Vector3d tmp(laserCloudSurfFromMap->points[pointSearchInd[j]].x,
-													laserCloudSurfFromMap->points[pointSearchInd[j]].y,
-													laserCloudSurfFromMap->points[pointSearchInd[j]].z);
-								center = center + tmp;
-							}
-							center = center / 5.0;
 							//构建五个最近点的坐标矩阵
 							for (int j = 0; j < 5; j++)
 							{
@@ -796,21 +719,7 @@ int main(int argc, char **argv)
 								ceres::CostFunction *cost_function = LidarPlaneNormFactor::Create(curr_point, norm, negative_OA_dot_norm);
 								problem.AddResidualBlock(cost_function, loss_function, parameters, parameters + 4);
 								surf_num++;
-								usedSurf.push_back(pointOri);
-
-								if(fabs(xNorm.dot(norm)) > 0.866)
-									xPlane++;
-								if(fabs(yNorm.dot(norm)) > 0.866)
-									yPlane++;
-								if(fabs(zNorm.dot(norm)) > 0.866)
-									zPlane++; 
 							}
-							else
-							{
-								//ceres::CostFunction *cost_function = LidarDistanceFactor::Create(curr_point, center);
-								//problem.AddResidualBlock(cost_function, loss_function, parameters, parameters + 4);
-							}
-
 						}
 					}
 
@@ -818,9 +727,6 @@ int main(int argc, char **argv)
 					printf("surf num %d used surf num %d \n", laserCloudSurfStackNum, surf_num);
 
 					printf("mapping data assosiation time %f ms \n", t_data.toc());
-
-					printf("x line %d y line % d zline %d \n", xLine, yLine, zLine);
-					printf("x plane %d y plane %d z plane %d \n", xPlane, yPlane, zPlane);
 
 					TicToc t_solver;
 					ceres::Solver::Options options;
@@ -917,92 +823,10 @@ int main(int argc, char **argv)
 			}
 			printf("filter time %f ms \n", t_filter.toc());
 
-			//debug
-			{
-				// pub used corner in one frame
-				for(int i = 0; i < usedCorner.points.size(); i++)
-				{
-					pointAssociateToMap(&usedCorner.points[i], &usedCorner.points[i]);
-				}
-				sensor_msgs::PointCloud2 usedCornerMsg;
-				pcl::toROSMsg(usedCorner, usedCornerMsg);
-				usedCornerMsg.header.stamp = ros::Time().fromSec(timeLaserOdometry);
-				usedCornerMsg.header.frame_id = "/camera_init";
-				pubUsedCorner.publish(usedCornerMsg);
-
-				// pub used surf in one frame
-				for(int i = 0; i < usedSurf.points.size(); i++)
-				{
-					pointAssociateToMap(&usedSurf.points[i], &usedSurf.points[i]);
-				}
-				sensor_msgs::PointCloud2 usedSurfMsg;
-				pcl::toROSMsg(usedSurf, usedSurfMsg);
-				usedSurfMsg.header.stamp = ros::Time().fromSec(timeLaserOdometry);
-				usedSurfMsg.header.frame_id = "/camera_init";
-				pubUsedSurf.publish(usedSurfMsg);
-
-
-				corner.clear();
-				surf.clear();
-				// pub corner in one frame
-				for (int i = 0; i < laserCloudCornerStackNum; i++)
-				{
-					PointType pointSel;
-					pointAssociateToMap(&laserCloudCornerStack->points[i], &pointSel);
-					corner.push_back(pointSel);
-				}
-				sensor_msgs::PointCloud2 CornerMsg;
-				pcl::toROSMsg(corner, CornerMsg);
-				CornerMsg.header.stamp = ros::Time().fromSec(timeLaserOdometry);
-				CornerMsg.header.frame_id = "/camera_init";
-				pubCorner.publish(CornerMsg);
-
-				// pub surf in one frame
-				for (int i = 0; i < laserCloudSurfStackNum; i++)
-				{
-					PointType pointSel;
-					pointAssociateToMap(&laserCloudSurfStack->points[i], &pointSel);
-					surf.push_back(pointSel);
-				}
-				sensor_msgs::PointCloud2 SurfMsg;
-				pcl::toROSMsg(surf, SurfMsg);
-				SurfMsg.header.stamp = ros::Time().fromSec(timeLaserOdometry);
-				SurfMsg.header.frame_id = "/camera_init";
-				pubSurf.publish(SurfMsg);
-
-				mapCorner.clear();
-				mapSurf.clear();
-				// pub surround corners
-				int laserCloudCornerFromMapNum = laserCloudCornerFromMap->points.size();
-				for(int i = 0; i < laserCloudCornerFromMapNum; i++)
-				{
-					mapCorner.push_back(laserCloudCornerFromMap->points[i]);
-				}
-				sensor_msgs::PointCloud2 mapCornerMsg;
-				pcl::toROSMsg(mapCorner, mapCornerMsg);
-				mapCornerMsg.header.stamp = ros::Time().fromSec(timeLaserOdometry);
-				mapCornerMsg.header.frame_id = "/camera_init";
-				pubMapCorner.publish(mapCornerMsg);
-
-				// pub surround surfs
-				int laserCloudSurfFromMapNum = laserCloudSurfFromMap->points.size();
-				for(int i = 0; i < laserCloudSurfFromMapNum; i++)
-				{
-					mapSurf.push_back(laserCloudSurfFromMap->points[i]);
-				}
-				sensor_msgs::PointCloud2 mapSurfMsg;
-				pcl::toROSMsg(mapSurf, mapSurfMsg);
-				mapSurfMsg.header.stamp = ros::Time().fromSec(timeLaserOdometry);
-				mapSurfMsg.header.frame_id = "/camera_init";
-				pubMapSurf.publish(mapSurfMsg);
-			}
-
 			TicToc t_pub;
-			//特征点汇总下采样，每隔五帧publish一次，从第一次开始
-			if (frameCount % mapFrameNum == 0)
+			//publish surround map for every 5 frame
+			if (frameCount % 5 == 0)
 			{
-				frameCount = 0;
-
 				laserCloudSurround->clear();
 				for (int i = 0; i < laserCloudSurroundNum; i++)
 				{
@@ -1018,6 +842,21 @@ int main(int argc, char **argv)
 				pubLaserCloudSurround.publish(laserCloudSurround3);
 			}
 
+			if (frameCount % 20 == 0)
+			{
+				pcl::PointCloud<PointType> laserCloudMap;
+				for (int i = 0; i < 4851; i++)
+				{
+					laserCloudMap += *laserCloudCornerArray[i];
+					laserCloudMap += *laserCloudSurfArray[i];
+				}
+				sensor_msgs::PointCloud2 laserCloudMsg;
+				pcl::toROSMsg(laserCloudMap, laserCloudMsg);
+				laserCloudMsg.header.stamp = ros::Time().fromSec(timeLaserOdometry);
+				laserCloudMsg.header.frame_id = "/camera_init";
+				pubLaserCloudMap.publish(laserCloudMsg);
+			}
+
 			//将点云中全部点转移到世界坐标系下
 			int laserCloudFullResNum = laserCloudFullRes->points.size();
 			for (int i = 0; i < laserCloudFullResNum; i++)
@@ -1031,37 +870,6 @@ int main(int argc, char **argv)
 			laserCloudFullRes3.header.frame_id = "/camera_init";
 			pubLaserCloudFullRes.publish(laserCloudFullRes3);
 
-			nav_msgs::Odometry odomAftMapped;
-			odomAftMapped.header.frame_id = "/camera_init";
-			odomAftMapped.child_frame_id = "/aft_mapped";
-			odomAftMapped.header.stamp = ros::Time().fromSec(timeLaserOdometry);
-			odomAftMapped.pose.pose.orientation.x = q_w_curr.x();
-			odomAftMapped.pose.pose.orientation.y = q_w_curr.y();
-			odomAftMapped.pose.pose.orientation.z = q_w_curr.z();
-			odomAftMapped.pose.pose.orientation.w = q_w_curr.w();
-			odomAftMapped.pose.pose.position.x = t_w_curr.x();
-			odomAftMapped.pose.pose.position.y = t_w_curr.y();
-			odomAftMapped.pose.pose.position.z = t_w_curr.z();
-			pubOdomAftMapped.publish(odomAftMapped);
-
-			geometry_msgs::PoseStamped laserAfterMappedPose;
-			laserAfterMappedPose.header = odomAftMapped.header;
-			laserAfterMappedPose.pose = odomAftMapped.pose.pose;
-			laserAfterMappedPath.header.stamp = odomAftMapped.header.stamp;
-			laserAfterMappedPath.header.frame_id = "/camera_init";
-			laserAfterMappedPath.poses.push_back(laserAfterMappedPose);
-			pubLaserAfterMappedPath.publish(laserAfterMappedPath);
-
-			//广播坐标系旋转平移参量
-			tf::TransformBroadcaster tfBroadcaster;
-			tf::StampedTransform aftMappedTrans;
-			aftMappedTrans.frame_id_ = "/camera_init";
-			aftMappedTrans.child_frame_id_ = "/aft_mapped";
-			aftMappedTrans.stamp_ = ros::Time().fromSec(timeLaserOdometry);
-			aftMappedTrans.setRotation(tf::Quaternion(q_w_curr.x(), q_w_curr.y(), q_w_curr.z(), q_w_curr.w()));
-			aftMappedTrans.setOrigin(tf::Vector3(t_w_curr.x(), t_w_curr.y(), t_w_curr.z()));
-			tfBroadcaster.sendTransform(aftMappedTrans);
-
 			printf("mapping pub time %f ms \n", t_pub.toc());
 
 			printf("whole mapping time %f ms +++++\n", t_whole.toc());
@@ -1069,14 +877,61 @@ int main(int argc, char **argv)
 			frameCount++;
 		}
 
-		status = ros::ok();
-		rate.sleep();
+		std::chrono::milliseconds dura(2);
+        std::this_thread::sleep_for(dura);
 	}
+}
+
+int main(int argc, char **argv)
+{
+	ros::init(argc, argv, "laserMapping");
+	ros::NodeHandle nh;
+
+	float lineRes = 0;
+	float planeRes = 0;
+	nh.param<float>("mapping_line_resolution", lineRes, 0.4);
+	nh.param<float>("mapping_plane_resolution", planeRes, 0.8);
+	printf("line resolution %f plane resolution %f \n", lineRes, planeRes);
+	downSizeFilterCorner.setLeafSize(lineRes, lineRes,lineRes);
+	downSizeFilterSurf.setLeafSize(planeRes, planeRes, planeRes);
+
+	nh.param<std::string>("output_path", outputFile, "result.txt");
+	printf("output file %s\n", outputFile.c_str()); 
+	FILE* outFile;
+	outFile = fopen(outputFile.c_str(),"w");
+	fclose(outFile);
+
+
+
+
+	ros::Subscriber subLaserCloudCornerLast = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_corner_last", 100, laserCloudCornerLastHandler);
+
+	ros::Subscriber subLaserCloudSurfLast = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_surf_last", 100, laserCloudSurfLastHandler);
+
+	ros::Subscriber subLaserOdometry = nh.subscribe<nav_msgs::Odometry>("/laser_odom_to_init", 100, laserOdometryHandler);
+
+	ros::Subscriber subLaserCloudFullRes = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_cloud_3", 100, laserCloudFullResHandler);
+
+	pubLaserCloudSurround = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_surround", 100);
+
+	pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_map", 100);
+
+	pubLaserCloudFullRes = nh.advertise<sensor_msgs::PointCloud2>("/velodyne_cloud_registered", 100);
+
+	pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>("/aft_mapped_to_init", 100);
+
+	pubLaserAfterMappedPath = nh.advertise<nav_msgs::Path>("/aft_mapped_path", 100);
+
+	//指针初始化
+	for (int i = 0; i < laserCloudNum; i++)
+	{
+		laserCloudCornerArray[i].reset(new pcl::PointCloud<PointType>());
+		laserCloudSurfArray[i].reset(new pcl::PointCloud<PointType>());
+	}
+
+	std::thread mapping_process{process};
+
+	ros::spin();
 
 	return 0;
 }
-
-// to do list
-// x z change
-// check 1 init & gt  2 transform to local and world
-// plane 0.02

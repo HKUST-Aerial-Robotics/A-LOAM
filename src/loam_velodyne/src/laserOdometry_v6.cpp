@@ -37,7 +37,7 @@ constexpr double SCAN_PERIOD = 0.1;
 constexpr double DISTANCE_SQ_THRESHOLD = 25;
 constexpr double NEARBY_SCAN = 1.5;
 
-const int skipFrameNum = 2;
+int skipFrameNum = 5;
 bool systemInited = false;
 
 double timeCornerPointsSharp = 0;
@@ -168,6 +168,10 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "laserOdometry");
     ros::NodeHandle nh;
+
+    nh.param<int>("mapping_skip_frame", skipFrameNum, 2);
+
+    printf("Mapping %d Hz \n", 10 / skipFrameNum);
 
     ros::Subscriber subCornerPointsSharp = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_sharp", 100, laserCloudSharpHandler);
 
@@ -581,6 +585,8 @@ int main(int argc, char **argv)
             }
             printf("publication time %f ms \n", t_pub.toc());
             printf("whole laserOdometry time %f ms \n \n", t_whole.toc());
+            if(t_whole.toc() > 100)
+                ROS_WARN("odometry process over 100ms");
 
             frameCount++;
         }

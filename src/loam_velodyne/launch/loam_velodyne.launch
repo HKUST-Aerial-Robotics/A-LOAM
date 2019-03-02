@@ -1,11 +1,12 @@
 <launch>
 
-  <arg name="rviz" default="true" />
+    <arg name="rviz" default="true" />
 
-  <node pkg="loam_velodyne" type="scanRegistration" name="scanRegistration" output="log"/>
+    <param name="scan_line" type="int" value="64" />
+    <node pkg="loam_velodyne" type="scanRegistration" name="scanRegistration" output="screen"/>
 
-  <node pkg="loam_velodyne" type="laserOdometry" name="laserOdometry" output="screen" respawn="true">
-  </node>
+    <node pkg="loam_velodyne" type="laserOdometry" name="laserOdometry" output="screen" respawn="screen">
+    </node>
 
 
   <node pkg="loam_velodyne" type="laserMapping" name="laserMapping" output="screen"/>

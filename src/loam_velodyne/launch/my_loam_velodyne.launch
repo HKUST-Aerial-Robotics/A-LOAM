@@ -1,11 +1,19 @@
 <launch>
+    
+    <param name="scan_line" type="int" value="64" />
 
+    <!-- if 1, do mapping 10 Hz, if 2, do mapping 5 Hz... -->
+    <param name="mapping_skip_frame" type="int" value="1" />
 
+    <param name="mapping_line_resolution" type="double" value="0.4"/>
+    <param name="mapping_plane_resolution" type="double" value="0.8"/>
 
-  <node pkg="loam_velodyne" type="scanRegistration" name="scanRegistration" output="log"/>
+    <param name="output_path" type="string" value="/home/tony-ws1/result.txt"/>
 
-  <node pkg="loam_velodyne" type="my_laserOdometry" name="my_laserOdometry" output="log" />
+    <node pkg="loam_velodyne" type="scanRegistration" name="scanRegistration" output="screen" />
 
-  <node pkg="loam_velodyne" type="my_laserMapping" name="my_laserMapping" output="screen" />
+    <node pkg="loam_velodyne" type="my_laserOdometry" name="my_laserOdometry" output="screen" />
+
+    <node pkg="loam_velodyne" type="my_laserMapping" name="my_laserMapping" output="screen" />
 
 </launch>
