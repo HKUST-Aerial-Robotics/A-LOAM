@@ -133,7 +133,6 @@ void removeZeroFromPointCloud(const pcl::PointCloud<PointT> &cloud_in,
 //接收点云数据，velodyne雷达坐标系安装为x轴向前，y轴向左，z轴向上的右手坐标系
 void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
 {
-    printf("receive laser message at %f \n", ros::Time::now().toSec());
     if (!systemInited)
     { //丢弃前20个点云数据
         systemInitCount++;

@@ -37,8 +37,6 @@ backward::SignalHandling sh;
 
 int frameCount = 0;
 
-std::string outputFile;
-
 //时间戳
 double timeLaserCloudCornerLast = 0;
 double timeLaserCloudSurfLast = 0;
@@ -128,6 +126,7 @@ ros::Publisher pubLaserCloudSurround, pubLaserCloudMap, pubLaserCloudFullRes, pu
 
 nav_msgs::Path laserAfterMappedPath;
 
+
 void transformAssociateToMap()
 {
 	q_w_curr = q_wmap_wodom * q_wodom_curr;
@@ -209,14 +208,6 @@ void laserOdometryHandler(const nav_msgs::Odometry::ConstPtr &laserOdometry)
 	Eigen::Vector3d t_w_curr = q_wmap_wodom * t_wodom_curr + t_wmap_wodom; 
 	Eigen::Matrix3d r_w_curr = q_w_curr.toRotationMatrix();
 
-	FILE* outFile;
-	outFile = fopen(outputFile.c_str(),"a");
-
-	fprintf (outFile, "%f %f %f %f %f %f %f %f %f %f %f %f \n",r_w_curr(0,0), r_w_curr(0,1), r_w_curr(0,2), t_w_curr.x(),
-															   r_w_curr(1,0), r_w_curr(1,1), r_w_curr(1,2), t_w_curr.y(),
-															   r_w_curr(2,0), r_w_curr(2,1), r_w_curr(2,2), t_w_curr.z());
-	fclose (outFile);
-
 	nav_msgs::Odometry odomAftMapped;
 	odomAftMapped.header.frame_id = "/camera_init";
 	odomAftMapped.child_frame_id = "/aft_mapped";
@@ -237,17 +228,6 @@ void laserOdometryHandler(const nav_msgs::Odometry::ConstPtr &laserOdometry)
 	laserAfterMappedPath.header.frame_id = "/camera_init";
 	laserAfterMappedPath.poses.push_back(laserAfterMappedPose);
 	pubLaserAfterMappedPath.publish(laserAfterMappedPath);
-
-	//广播坐标系旋转平移参量
-	tf::TransformBroadcaster tfBroadcaster;
-	tf::StampedTransform aftMappedTrans;
-	aftMappedTrans.frame_id_ = "/camera_init";
-	aftMappedTrans.child_frame_id_ = "/aft_mapped";
-	aftMappedTrans.stamp_ = odomAftMapped.header.stamp;
-	aftMappedTrans.setRotation(tf::Quaternion(q_w_curr.x(), q_w_curr.y(), q_w_curr.z(), q_w_curr.w()));
-	aftMappedTrans.setOrigin(tf::Vector3(t_w_curr.x(), t_w_curr.y(), t_w_curr.z()));
-	tfBroadcaster.sendTransform(aftMappedTrans);
-
 }
 
 void process()
@@ -876,7 +856,6 @@ void process()
 
 			frameCount++;
 		}
-
 		std::chrono::milliseconds dura(2);
         std::this_thread::sleep_for(dura);
 	}
@@ -894,15 +873,6 @@ int main(int argc, char **argv)
 	printf("line resolution %f plane resolution %f \n", lineRes, planeRes);
 	downSizeFilterCorner.setLeafSize(lineRes, lineRes,lineRes);
 	downSizeFilterSurf.setLeafSize(planeRes, planeRes, planeRes);
-
-	nh.param<std::string>("output_path", outputFile, "result.txt");
-	printf("output file %s\n", outputFile.c_str()); 
-	FILE* outFile;
-	outFile = fopen(outputFile.c_str(),"w");
-	fclose(outFile);
-
-
-
 
 	ros::Subscriber subLaserCloudCornerLast = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_corner_last", 100, laserCloudCornerLastHandler);
 
