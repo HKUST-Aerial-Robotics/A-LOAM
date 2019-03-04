@@ -98,6 +98,8 @@ double parameters[7] = {0, 0, 0, 1, 0, 0, 0};
 Eigen::Map<Eigen::Quaterniond> q_w_curr(parameters);
 Eigen::Map<Eigen::Vector3d> t_w_curr(parameters + 4);
 
+Eigen::Quaterniond q_w_last(1, 0, 0, 0);
+Eigen::Vector3d t_w_last(0, 0, 0);
 
 // wmap_T_odom * odom_T_curr = wmap_T_curr;
 // transformation between odom's world and map's world frame
@@ -126,17 +128,34 @@ ros::Publisher pubLaserCloudSurround, pubLaserCloudMap, pubLaserCloudFullRes, pu
 
 nav_msgs::Path laserAfterMappedPath;
 
-
+// set initial guess
 void transformAssociateToMap()
 {
+	/*
+	Eigen::Matrix4d T_w_curr = Eigen::Matrix4d::Identity();
+	Eigen::Matrix4d T_w_last = Eigen::Matrix4d::Identity();
+	T_w_curr.block<3, 3>(0, 0) = q_w_curr.toRotationMatrix();
+	T_w_curr.block<3, 1>(0, 3) = t_w_curr;
+	T_w_last.block<3, 3>(0, 0) = q_w_last.toRotationMatrix();
+	T_w_last.block<3, 1>(0, 3) = t_w_last;
+
+	T_w_curr = T_w_curr * T_w_last.inverse() * T_w_curr;
+	q_w_curr = T_w_curr.block<3, 3>(0, 0);
+	t_w_curr = T_w_curr.block<3, 1>(0, 3); 
+	*/
+	
 	q_w_curr = q_wmap_wodom * q_wodom_curr;
 	t_w_curr = q_wmap_wodom * t_wodom_curr + t_wmap_wodom; 
+	
 }
 
 void transformUpdate()
 {
 	q_wmap_wodom = q_w_curr * q_wodom_curr.inverse();
 	t_wmap_wodom = t_w_curr - q_wmap_wodom * t_wodom_curr;
+
+	q_w_last = q_w_curr;
+	t_w_last = t_w_curr;
 }
 
 //根据调整计算后的转移矩阵，将点注册到全局世界坐标系下
@@ -206,7 +225,6 @@ void laserOdometryHandler(const nav_msgs::Odometry::ConstPtr &laserOdometry)
 
 	Eigen::Quaterniond q_w_curr = q_wmap_wodom * q_wodom_curr;
 	Eigen::Vector3d t_w_curr = q_wmap_wodom * t_wodom_curr + t_wmap_wodom; 
-	Eigen::Matrix3d r_w_curr = q_w_curr.toRotationMatrix();
 
 	nav_msgs::Odometry odomAftMapped;
 	odomAftMapped.header.frame_id = "/camera_init";
@@ -878,7 +896,9 @@ int main(int argc, char **argv)
 
 	ros::Subscriber subLaserCloudSurfLast = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_surf_last", 100, laserCloudSurfLastHandler);
 
-	ros::Subscriber subLaserOdometry = nh.subscribe<nav_msgs::Odometry>("/laser_odom_to_init", 100, laserOdometryHandler);
+	//ros::Subscriber subLaserOdometry = nh.subscribe<nav_msgs::Odometry>("/laser_odom_to_init", 100, laserOdometryHandler);
+
+	ros::Subscriber subLaserOdometry = nh.subscribe<nav_msgs::Odometry>("/odometry_gt_lidar", 100, laserOdometryHandler);
 
 	ros::Subscriber subLaserCloudFullRes = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_cloud_3", 100, laserCloudFullResHandler);
 
