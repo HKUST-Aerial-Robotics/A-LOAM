@@ -98,9 +98,6 @@ double parameters[7] = {0, 0, 0, 1, 0, 0, 0};
 Eigen::Map<Eigen::Quaterniond> q_w_curr(parameters);
 Eigen::Map<Eigen::Vector3d> t_w_curr(parameters + 4);
 
-Eigen::Quaterniond q_w_last(1, 0, 0, 0);
-Eigen::Vector3d t_w_last(0, 0, 0);
-
 // wmap_T_odom * odom_T_curr = wmap_T_curr;
 // transformation between odom's world and map's world frame
 Eigen::Quaterniond q_wmap_wodom(1, 0, 0, 0);
@@ -131,31 +128,19 @@ nav_msgs::Path laserAfterMappedPath;
 // set initial guess
 void transformAssociateToMap()
 {
-	/*
-	Eigen::Matrix4d T_w_curr = Eigen::Matrix4d::Identity();
-	Eigen::Matrix4d T_w_last = Eigen::Matrix4d::Identity();
-	T_w_curr.block<3, 3>(0, 0) = q_w_curr.toRotationMatrix();
-	T_w_curr.block<3, 1>(0, 3) = t_w_curr;
-	T_w_last.block<3, 3>(0, 0) = q_w_last.toRotationMatrix();
-	T_w_last.block<3, 1>(0, 3) = t_w_last;
-
-	T_w_curr = T_w_curr * T_w_last.inverse() * T_w_curr;
-	q_w_curr = T_w_curr.block<3, 3>(0, 0);
-	t_w_curr = T_w_curr.block<3, 1>(0, 3); 
-	*/
-	
 	q_w_curr = q_wmap_wodom * q_wodom_curr;
-	t_w_curr = q_wmap_wodom * t_wodom_curr + t_wmap_wodom; 
+	t_w_curr = q_wmap_wodom * t_wodom_curr + t_wmap_wodom;
 	
+	/*
+	q_w_curr = q_wodom_curr;
+	t_w_curr = t_wodom_curr;
+	*/
 }
 
 void transformUpdate()
 {
 	q_wmap_wodom = q_w_curr * q_wodom_curr.inverse();
 	t_wmap_wodom = t_w_curr - q_wmap_wodom * t_wodom_curr;
-
-	q_w_last = q_w_curr;
-	t_w_last = t_w_curr;
 }
 
 //根据调整计算后的转移矩阵，将点注册到全局世界坐标系下
@@ -600,7 +585,7 @@ void process()
 				kdtreeSurfFromMap->setInputCloud(laserCloudSurfFromMap);
 				printf("build tree time %f ms \n", t_tree.toc());
 
-				for (int iterCount = 0; iterCount < 2; iterCount++)
+				for (int iterCount = 0; iterCount < 4; iterCount++)
 				{
 					//ceres::LossFunction *loss_function = NULL;
 					ceres::LossFunction *loss_function = new ceres::HuberLoss(0.1);
@@ -623,7 +608,7 @@ void process()
 						pointAssociateToMap(&pointOri, &pointSel);
 						kdtreeCornerFromMap->nearestKSearch(pointSel, 5, pointSearchInd, pointSearchSqDis); //寻找最近距离五个点
 
-						if (pointSearchSqDis[4] < sqrtDis * 0.01)
+						if (pointSearchSqDis[4] < 1.0)
 						{ //5个点中最大距离不超过1才处理
 							std::vector<Eigen::Vector3d> nearCorners;
 							Eigen::Vector3d center(0, 0, 0);
@@ -678,7 +663,7 @@ void process()
 
 						Eigen::Matrix<double, 5, 3> matA0;
 						Eigen::Matrix<double, 5, 1> matB0 = -1 * Eigen::Matrix<double, 5, 1>::Ones();
-						if (pointSearchSqDis[4] < sqrtDis * 0.01)
+						if (pointSearchSqDis[4] < 1.0)
 						{
 							//构建五个最近点的坐标矩阵
 							for (int j = 0; j < 5; j++)
