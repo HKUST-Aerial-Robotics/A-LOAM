@@ -2,7 +2,7 @@
 
     <arg name="rviz" default="true" />
 
-    <param name="scan_line" type="int" value="64" />
+    <param name="scan_line" type="int" value="16" />
     <node pkg="loam_velodyne" type="scanRegistration" name="scanRegistration" output="screen"/>
 
     <node pkg="loam_velodyne" type="laserOdometry" name="laserOdometry" output="screen">

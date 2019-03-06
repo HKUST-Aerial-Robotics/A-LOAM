@@ -53,7 +53,7 @@
 const float scanPeriod = 0.1;
 
 //跳帧数，控制发给laserMapping的频率
-const int skipFrameNum = 1;
+const int skipFrameNum = 0;
 bool systemInited = false;
 
 //时间戳信息
@@ -1016,7 +1016,7 @@ int main(int argc, char** argv)
       laserPose.pose = laserOdometry.pose.pose;
       laserPath.header.stamp = laserOdometry.header.stamp;
       laserPath.poses.push_back(laserPose);
-      pubLaserPath.publish(laserPath);
+      pubLaserPath.publish(laserPath); 
 
       //广播新的平移旋转之后的坐标系(rviz)
       laserOdometryTrans.stamp_ = ros::Time().fromSec(timeSurfPointsLessFlat);

@@ -35,7 +35,7 @@ int corner_correspondence = 0, plane_correspondence = 0;
 
 constexpr double SCAN_PERIOD = 0.1;
 constexpr double DISTANCE_SQ_THRESHOLD = 25;
-constexpr double NEARBY_SCAN = 1.5;
+constexpr double NEARBY_SCAN = 2.5;
 
 int skipFrameNum = 5;
 bool systemInited = false;
@@ -256,7 +256,7 @@ int main(int argc, char **argv)
                 int surfPointsFlatNum = surfPointsFlat->points.size();
 
                 TicToc t_opt;
-                for (size_t opti_counter = 0; opti_counter < 2; ++opti_counter)
+                for (size_t opti_counter = 0; opti_counter < 3; ++opti_counter)
                 {
                     corner_correspondence = 0;
                     plane_correspondence = 0;

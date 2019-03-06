@@ -100,6 +100,8 @@ std::vector<ros::Publisher> pubEachScan;
 
 bool PUB_EACH_LINE = false;
 
+double MINIMUM_RANGE = 0.1; 
+
 // Tong add
 template <typename PointT>
 void removeClosePointCloud(const pcl::PointCloud<PointT> &cloud_in,
@@ -162,9 +164,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
     pcl::removeNaNFromPointCloud(laserCloudIn, laserCloudIn, indices);
 
     // Tong add
-    printf("before remove close points, size %d \n", laserCloudIn.points.size());
-    removeClosePointCloud(laserCloudIn, laserCloudIn, 10);
-    printf("after remove close points, size %d \n", laserCloudIn.points.size());
+    removeClosePointCloud(laserCloudIn, laserCloudIn, MINIMUM_RANGE);
 
     //点云点的数量
     int cloudSize = laserCloudIn.points.size();
@@ -326,123 +326,6 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
         cloudLabel[i] = 0;
     }
 
-    /*
-    pcl::PointCloud<PointType> removePoints;
-    // remove 
-    for (int i = 5; i < cloudSize - 6; i++)
-    {
-        
-        float diffX1 = laserCloud->points[i + 1].x - laserCloud->points[i].x;
-        float diffY1 = laserCloud->points[i + 1].y - laserCloud->points[i].y;
-        float diffZ1 = laserCloud->points[i + 1].z - laserCloud->points[i].z;     
-        float diff1 = diffX1 * diffX1 + diffY1 * diffY1 + diffZ1 * diffZ1;
-
-        float diffX2 = laserCloud->points[i - 1].x - laserCloud->points[i].x;
-        float diffY2 = laserCloud->points[i - 1].y - laserCloud->points[i].y;
-        float diffZ2 = laserCloud->points[i - 1].z - laserCloud->points[i].z;   
-        float diff2 = diffX2 * diffX2 + diffY2 * diffY2 + diffZ2 * diffZ2;
-
-        float diffX3 = laserCloud->points[i + 1].x - laserCloud->points[i - 1].x;
-        float diffY3 = laserCloud->points[i + 1].y - laserCloud->points[i - 1].y;
-        float diffZ3 = laserCloud->points[i + 1].z - laserCloud->points[i - 1].z;     
-        float diff3 = diffX3 * diffX3 + diffY3 * diffY3 + diffZ3 * diffZ3;
-
-        if((diff1 > diff3) && (diff2 > diff3))
-        {
-            cloudNeighborPicked[i] = 1;
-            removePoints.push_back(laserCloud->points[i]);
-        }
-
-    }
-    */
-    /*
-    //挑选点，排除容易被斜面挡住的点以及离群点，有些点容易被斜面挡住，而离群点可能出现带有偶然性，这些情况都可能导致前后两次扫描不能被同时看到
-    for (int i = 5; i < cloudSize - 6; i++)
-    { //与后一个点差值，所以减6
-        float diffX = laserCloud->points[i + 1].x - laserCloud->points[i].x;
-        float diffY = laserCloud->points[i + 1].y - laserCloud->points[i].y;
-        float diffZ = laserCloud->points[i + 1].z - laserCloud->points[i].z;
-        //计算有效曲率点与后一个点之间的距离平方和     
-        float diff = diffX * diffX + diffY * diffY + diffZ * diffZ;
-
-        if (diff > 0.1)
-        { //前提:两个点之间距离要大于0.1
-
-            //点的深度
-            float depth1 = sqrt(laserCloud->points[i].x * laserCloud->points[i].x +
-                                laserCloud->points[i].y * laserCloud->points[i].y +
-                                laserCloud->points[i].z * laserCloud->points[i].z);
-
-            //后一个点的深度
-            float depth2 = sqrt(laserCloud->points[i + 1].x * laserCloud->points[i + 1].x +
-                                laserCloud->points[i + 1].y * laserCloud->points[i + 1].y +
-                                laserCloud->points[i + 1].z * laserCloud->points[i + 1].z);
-
-            //按照两点的深度的比例，将深度较大的点拉回后计算距离
-            if (depth1 > depth2)
-            {
-                diffX = laserCloud->points[i + 1].x - laserCloud->points[i].x * depth2 / depth1;
-                diffY = laserCloud->points[i + 1].y - laserCloud->points[i].y * depth2 / depth1;
-                diffZ = laserCloud->points[i + 1].z - laserCloud->points[i].z * depth2 / depth1;
-
-                //边长比也即是弧度值，若小于0.1，说明夹角比较小，斜面比较陡峭,点深度变化比较剧烈,点处在近似与激光束平行的斜面上
-                if (sqrt(diffX * diffX + diffY * diffY + diffZ * diffZ) / depth2 < 0.1)
-                { //排除容易被斜面挡住的点
-                    //该点及前面五个点（大致都在斜面上）全部置为筛选过
-                    cloudNeighborPicked[i - 5] = 1;
-                    cloudNeighborPicked[i - 4] = 1;
-                    cloudNeighborPicked[i - 3] = 1;
-                    cloudNeighborPicked[i - 2] = 1;
-                    cloudNeighborPicked[i - 1] = 1;
-                    cloudNeighborPicked[i] = 1;
-                }
-            }
-            else
-            {
-                diffX = laserCloud->points[i + 1].x * depth1 / depth2 - laserCloud->points[i].x;
-                diffY = laserCloud->points[i + 1].y * depth1 / depth2 - laserCloud->points[i].y;
-                diffZ = laserCloud->points[i + 1].z * depth1 / depth2 - laserCloud->points[i].z;
-
-                if (sqrt(diffX * diffX + diffY * diffY + diffZ * diffZ) / depth1 < 0.1)
-                {
-                    cloudNeighborPicked[i + 1] = 1;
-                    cloudNeighborPicked[i + 2] = 1;
-                    cloudNeighborPicked[i + 3] = 1;
-                    cloudNeighborPicked[i + 4] = 1;
-                    cloudNeighborPicked[i + 5] = 1;
-                    cloudNeighborPicked[i + 6] = 1;
-                }
-            }
-        }
-
-        float diffX2 = laserCloud->points[i].x - laserCloud->points[i - 1].x;
-        float diffY2 = laserCloud->points[i].y - laserCloud->points[i - 1].y;
-        float diffZ2 = laserCloud->points[i].z - laserCloud->points[i - 1].z;
-        //与前一个点的距离平方和
-        float diff2 = diffX2 * diffX2 + diffY2 * diffY2 + diffZ2 * diffZ2;
-
-        //点深度的平方和
-        float dis = laserCloud->points[i].x * laserCloud->points[i].x + laserCloud->points[i].y * laserCloud->points[i].y + laserCloud->points[i].z * laserCloud->points[i].z;
-
-        //与前后点的平方和都大于深度平方和的万分之二，这些点视为离群点，包括陡斜面上的点，强烈凸凹点和空旷区域中的某些点，置为筛选过，弃用
-        if (diff > 0.0002 * dis && diff2 > 0.0002 * dis)
-        {
-            cloudNeighborPicked[i] = 1;
-            removePoints.push_back(laserCloud->points[i]);
-        }
-    }
-    */
-    /*
-    // publish remove points for debug
-    {
-        printf("remove pts num %d \n", removePoints.points.size());
-        sensor_msgs::PointCloud2 removePOintsMsg;
-        pcl::toROSMsg(removePoints, removePOintsMsg);
-        removePOintsMsg.header.stamp = laserCloudMsg->header.stamp;
-        removePOintsMsg.header.frame_id = "/camera_init";
-        pubRemovePoints.publish(removePOintsMsg);
-    }
-    */
     printf("time curve %f \n", t_curve.toc());
 
     TicToc t_pts;
@@ -656,6 +539,8 @@ int main(int argc, char **argv)
     ros::NodeHandle nh;
 
     nh.param<int>("scan_line", N_SCANS, 16);
+
+    nh.param<double>("minimum_range", MINIMUM_RANGE, 0.1);
 
     printf("scan line number %d \n", N_SCANS);
 
