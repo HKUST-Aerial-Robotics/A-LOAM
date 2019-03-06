@@ -239,13 +239,13 @@ int main(int argc, char **argv)
                 int surfPointsFlatNum = surfPointsFlat->points.size();
 
                 TicToc t_opt;
-                for (size_t opti_counter = 0; opti_counter < 3; ++opti_counter)
+                for (size_t opti_counter = 0; opti_counter < 2; ++opti_counter)
                 {
                     corner_correspondence = 0;
                     plane_correspondence = 0;
 
                     //ceres::LossFunction *loss_function = NULL;
-                    ceres::LossFunction *loss_function = new ceres::HuberLoss(0.01);
+                    ceres::LossFunction *loss_function = new ceres::HuberLoss(0.1);
                     ceres::LocalParameterization *q_parameterization =
                         new ceres::EigenQuaternionParameterization();
                     ceres::Problem::Options problem_options;

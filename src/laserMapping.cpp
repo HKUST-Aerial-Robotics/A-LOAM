@@ -529,7 +529,7 @@ void process()
 				kdtreeSurfFromMap->setInputCloud(laserCloudSurfFromMap);
 				printf("build tree time %f ms \n", t_tree.toc());
 
-				for (int iterCount = 0; iterCount < 4; iterCount++)
+				for (int iterCount = 0; iterCount < 2; iterCount++)
 				{
 					//ceres::LossFunction *loss_function = NULL;
 					ceres::LossFunction *loss_function = new ceres::HuberLoss(0.1);
