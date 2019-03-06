@@ -95,11 +95,15 @@ ros::Publisher pubCornerPointsSharp;
 ros::Publisher pubCornerPointsLessSharp;
 ros::Publisher pubSurfPointsFlat;
 ros::Publisher pubSurfPointsLessFlat;
+ros::Publisher pubRemovePoints;
+std::vector<ros::Publisher> pubEachScan;
+
+bool PUB_EACH_LINE = false;
 
 // Tong add
 template <typename PointT>
-void removeZeroFromPointCloud(const pcl::PointCloud<PointT> &cloud_in,
-                              pcl::PointCloud<PointT> &cloud_out)
+void removeClosePointCloud(const pcl::PointCloud<PointT> &cloud_in,
+                              pcl::PointCloud<PointT> &cloud_out, float thres)
 {
     // If the clouds are not the same, prepare the output
     if (&cloud_in != &cloud_out)
@@ -112,7 +116,7 @@ void removeZeroFromPointCloud(const pcl::PointCloud<PointT> &cloud_in,
 
     for (size_t i = 0; i < cloud_in.points.size(); ++i)
     {
-        if (cloud_in.points[i].x * cloud_in.points[i].x + cloud_in.points[i].y * cloud_in.points[i].y + cloud_in.points[i].z * cloud_in.points[i].z < 9)
+        if (cloud_in.points[i].x * cloud_in.points[i].x + cloud_in.points[i].y * cloud_in.points[i].y + cloud_in.points[i].z * cloud_in.points[i].z < thres * thres)
             continue;
         cloud_out.points[j] = cloud_in.points[i];
         j++;
@@ -158,7 +162,9 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
     pcl::removeNaNFromPointCloud(laserCloudIn, laserCloudIn, indices);
 
     // Tong add
-    removeZeroFromPointCloud(laserCloudIn, laserCloudIn);
+    printf("before remove close points, size %d \n", laserCloudIn.points.size());
+    removeClosePointCloud(laserCloudIn, laserCloudIn, 10);
+    printf("after remove close points, size %d \n", laserCloudIn.points.size());
 
     //点云点的数量
     int cloudSize = laserCloudIn.points.size();
@@ -218,7 +224,8 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
         }
 
         else if (N_SCANS == 64)
-        {
+        {   
+            //angle = angle - 2;
             if (angle >= -8.83)
             {
                 scanID = int((2 - angle) * 3.0 + 0.5);
@@ -229,7 +236,8 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
             }
             //过滤点，只挑选[-24.33度，+2度]范围内的点,scanID属于[0,63]
             //printf("angle: %f scanID %d \n", angle, scanID);
-            if (angle > 2 || angle < -24.33 || scanID > (N_SCANS - 1) || scanID < 0)
+            // use [0 50]  > 50 remove outlies 
+            if (angle > 2 || angle < -24.33 || scanID > 50 || scanID < 0)
             {
                 count--;
                 continue;
@@ -318,13 +326,43 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
         cloudLabel[i] = 0;
     }
 
+    /*
+    pcl::PointCloud<PointType> removePoints;
+    // remove 
+    for (int i = 5; i < cloudSize - 6; i++)
+    {
+        
+        float diffX1 = laserCloud->points[i + 1].x - laserCloud->points[i].x;
+        float diffY1 = laserCloud->points[i + 1].y - laserCloud->points[i].y;
+        float diffZ1 = laserCloud->points[i + 1].z - laserCloud->points[i].z;     
+        float diff1 = diffX1 * diffX1 + diffY1 * diffY1 + diffZ1 * diffZ1;
+
+        float diffX2 = laserCloud->points[i - 1].x - laserCloud->points[i].x;
+        float diffY2 = laserCloud->points[i - 1].y - laserCloud->points[i].y;
+        float diffZ2 = laserCloud->points[i - 1].z - laserCloud->points[i].z;   
+        float diff2 = diffX2 * diffX2 + diffY2 * diffY2 + diffZ2 * diffZ2;
+
+        float diffX3 = laserCloud->points[i + 1].x - laserCloud->points[i - 1].x;
+        float diffY3 = laserCloud->points[i + 1].y - laserCloud->points[i - 1].y;
+        float diffZ3 = laserCloud->points[i + 1].z - laserCloud->points[i - 1].z;     
+        float diff3 = diffX3 * diffX3 + diffY3 * diffY3 + diffZ3 * diffZ3;
+
+        if((diff1 > diff3) && (diff2 > diff3))
+        {
+            cloudNeighborPicked[i] = 1;
+            removePoints.push_back(laserCloud->points[i]);
+        }
+
+    }
+    */
+    /*
     //挑选点，排除容易被斜面挡住的点以及离群点，有些点容易被斜面挡住，而离群点可能出现带有偶然性，这些情况都可能导致前后两次扫描不能被同时看到
     for (int i = 5; i < cloudSize - 6; i++)
     { //与后一个点差值，所以减6
         float diffX = laserCloud->points[i + 1].x - laserCloud->points[i].x;
         float diffY = laserCloud->points[i + 1].y - laserCloud->points[i].y;
         float diffZ = laserCloud->points[i + 1].z - laserCloud->points[i].z;
-        //计算有效曲率点与后一个点之间的距离平方和
+        //计算有效曲率点与后一个点之间的距离平方和     
         float diff = diffX * diffX + diffY * diffY + diffZ * diffZ;
 
         if (diff > 0.1)
@@ -390,9 +428,21 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
         if (diff > 0.0002 * dis && diff2 > 0.0002 * dis)
         {
             cloudNeighborPicked[i] = 1;
+            removePoints.push_back(laserCloud->points[i]);
         }
     }
-
+    */
+    /*
+    // publish remove points for debug
+    {
+        printf("remove pts num %d \n", removePoints.points.size());
+        sensor_msgs::PointCloud2 removePOintsMsg;
+        pcl::toROSMsg(removePoints, removePOintsMsg);
+        removePOintsMsg.header.stamp = laserCloudMsg->header.stamp;
+        removePOintsMsg.header.frame_id = "/camera_init";
+        pubRemovePoints.publish(removePOintsMsg);
+    }
+    */
     printf("time curve %f \n", t_curve.toc());
 
     TicToc t_pts;
@@ -554,33 +604,46 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
     sensor_msgs::PointCloud2 laserCloudOutMsg;
     pcl::toROSMsg(*laserCloud, laserCloudOutMsg);
     laserCloudOutMsg.header.stamp = laserCloudMsg->header.stamp;
-    laserCloudOutMsg.header.frame_id = "/camera";
+    laserCloudOutMsg.header.frame_id = "/camera_init";
     pubLaserCloud.publish(laserCloudOutMsg);
 
     //publich消除非匀速运动畸变后的平面点和边沿点
     sensor_msgs::PointCloud2 cornerPointsSharpMsg;
     pcl::toROSMsg(cornerPointsSharp, cornerPointsSharpMsg);
     cornerPointsSharpMsg.header.stamp = laserCloudMsg->header.stamp;
-    cornerPointsSharpMsg.header.frame_id = "/camera";
+    cornerPointsSharpMsg.header.frame_id = "/camera_init";
     pubCornerPointsSharp.publish(cornerPointsSharpMsg);
 
     sensor_msgs::PointCloud2 cornerPointsLessSharpMsg;
     pcl::toROSMsg(cornerPointsLessSharp, cornerPointsLessSharpMsg);
     cornerPointsLessSharpMsg.header.stamp = laserCloudMsg->header.stamp;
-    cornerPointsLessSharpMsg.header.frame_id = "/camera";
+    cornerPointsLessSharpMsg.header.frame_id = "/camera_init";
     pubCornerPointsLessSharp.publish(cornerPointsLessSharpMsg);
 
     sensor_msgs::PointCloud2 surfPointsFlat2;
     pcl::toROSMsg(surfPointsFlat, surfPointsFlat2);
     surfPointsFlat2.header.stamp = laserCloudMsg->header.stamp;
-    surfPointsFlat2.header.frame_id = "/camera";
+    surfPointsFlat2.header.frame_id = "/camera_init";
     pubSurfPointsFlat.publish(surfPointsFlat2);
 
     sensor_msgs::PointCloud2 surfPointsLessFlat2;
     pcl::toROSMsg(surfPointsLessFlat, surfPointsLessFlat2);
     surfPointsLessFlat2.header.stamp = laserCloudMsg->header.stamp;
-    surfPointsLessFlat2.header.frame_id = "/camera";
+    surfPointsLessFlat2.header.frame_id = "/camera_init";
     pubSurfPointsLessFlat.publish(surfPointsLessFlat2);
+
+    // pub each scam
+    if(PUB_EACH_LINE)
+    {
+        for(int i = 0; i< N_SCANS; i++)
+        {
+            sensor_msgs::PointCloud2 scanMsg;
+            pcl::toROSMsg(laserCloudScans[i], scanMsg);
+            scanMsg.header.stamp = laserCloudMsg->header.stamp;
+            scanMsg.header.frame_id = "/camera_init";
+            pubEachScan[i].publish(scanMsg);
+        }
+    }
 
     printf("scan registration time %f ms *************\n", t_whole.toc());
     if(t_whole.toc() > 100)
@@ -614,6 +677,16 @@ int main(int argc, char **argv)
 
     pubSurfPointsLessFlat = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_less_flat", 100);
 
+    pubRemovePoints = nh.advertise<sensor_msgs::PointCloud2>("/laser_remove_points", 100);
+
+    if(PUB_EACH_LINE)
+    {
+        for(int i = 0; i < N_SCANS; i++)
+        {
+            ros::Publisher tmp = nh.advertise<sensor_msgs::PointCloud2>("/laser_scanid_" + std::to_string(i), 100);
+            pubEachScan.push_back(tmp);
+        }
+    }
     ros::spin();
 
     return 0;

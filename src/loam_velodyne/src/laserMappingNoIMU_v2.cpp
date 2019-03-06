@@ -197,6 +197,7 @@ void laserOdometryHandler(const nav_msgs::Odometry::ConstPtr &laserOdometry)
 	odometryBuf.push(laserOdometry);
 	mBuf.unlock();
 
+	/*
 	// local variable 
 	Eigen::Quaterniond q_wodom_curr;
 	Eigen::Vector3d t_wodom_curr;
@@ -231,6 +232,7 @@ void laserOdometryHandler(const nav_msgs::Odometry::ConstPtr &laserOdometry)
 	laserAfterMappedPath.header.frame_id = "/camera_init";
 	laserAfterMappedPath.poses.push_back(laserAfterMappedPose);
 	pubLaserAfterMappedPath.publish(laserAfterMappedPath);
+	*/
 }
 
 void process()
@@ -301,9 +303,9 @@ void process()
 			t_wodom_curr.z() = odometryBuf.front()->pose.pose.position.z;
 			odometryBuf.pop();
 
-			while(!cornerLastBuf.empty())
+			if(!cornerLastBuf.empty())
 			{
-				cornerLastBuf.pop();
+				//cornerLastBuf.pop();
 				ROS_WARN("drop lidar frame in mapping for real time performance, please increase skip number or decrease resolution");
 			}
 
@@ -649,8 +651,25 @@ void process()
 								ceres::CostFunction *cost_function = LidarEdgeFactor::Create(curr_point, point_a, point_b, 1.0);
 								problem.AddResidualBlock(cost_function, loss_function, parameters, parameters + 4);
 								corner_num++;	
-							}
+							}							
 						}
+						/*
+						else if(pointSearchSqDis[4] < 0.01 * sqrtDis)
+						{
+							Eigen::Vector3d center(0, 0, 0);
+							for (int j = 0; j < 5; j++)
+							{
+								Eigen::Vector3d tmp(laserCloudCornerFromMap->points[pointSearchInd[j]].x,
+													laserCloudCornerFromMap->points[pointSearchInd[j]].y,
+													laserCloudCornerFromMap->points[pointSearchInd[j]].z);
+								center = center + tmp;
+							}
+							center = center / 5.0;	
+							Eigen::Vector3d curr_point(pointOri.x, pointOri.y, pointOri.z);
+							ceres::CostFunction *cost_function = LidarDistanceFactor::Create(curr_point, center);
+							problem.AddResidualBlock(cost_function, loss_function, parameters, parameters + 4);
+						}
+						*/
 					}
 
 					int surf_num = 0;
@@ -674,7 +693,6 @@ void process()
 								//printf(" pts %f %f %f ", matA0(j, 0), matA0(j, 1), matA0(j, 2));
 							}
 							//printf(" target pts %f %f %f ", pointSel.x, pointSel.y, pointSel.z);
-
 							//printf("\n");
 							//求解matA0*matX0=matB0
 							// find the norm of plane
@@ -704,6 +722,23 @@ void process()
 								surf_num++;
 							}
 						}
+						/*
+						else if(pointSearchSqDis[4] < 0.01 * sqrtDis)
+						{
+							Eigen::Vector3d center(0, 0, 0);
+							for (int j = 0; j < 5; j++)
+							{
+								Eigen::Vector3d tmp(laserCloudSurfFromMap->points[pointSearchInd[j]].x,
+													laserCloudSurfFromMap->points[pointSearchInd[j]].y,
+													laserCloudSurfFromMap->points[pointSearchInd[j]].z);
+								center = center + tmp;
+							}
+							center = center / 5.0;	
+							Eigen::Vector3d curr_point(pointOri.x, pointOri.y, pointOri.z);
+							ceres::CostFunction *cost_function = LidarDistanceFactor::Create(curr_point, center);
+							problem.AddResidualBlock(cost_function, loss_function, parameters, parameters + 4);
+						}
+						*/
 					}
 
 					printf("corner num %d used corner num %d \n", laserCloudCornerStackNum, corner_num);
@@ -730,12 +765,12 @@ void process()
 				printf("mapping optimization time %f \n", t_opt.toc());
 
 				//迭代结束更新相关的转移矩阵
-				transformUpdate();
 			}
 			else
 			{
-				printf("time %f Map corner and surf num are not enough\n", timeLaserOdometry);
+				ROS_WARN("time %f Map corner and surf num are not enough");
 			}
+			transformUpdate();
 
 			TicToc t_add;
 			//将corner points按距离（比例尺缩小）归入相应的立方体
@@ -856,6 +891,27 @@ void process()
 			printf("mapping pub time %f ms \n", t_pub.toc());
 
 			printf("whole mapping time %f ms +++++\n", t_whole.toc());
+
+			nav_msgs::Odometry odomAftMapped;
+			odomAftMapped.header.frame_id = "/camera_init";
+			odomAftMapped.child_frame_id = "/aft_mapped";
+			odomAftMapped.header.stamp = ros::Time().fromSec(timeLaserOdometry);
+			odomAftMapped.pose.pose.orientation.x = q_w_curr.x();
+			odomAftMapped.pose.pose.orientation.y = q_w_curr.y();
+			odomAftMapped.pose.pose.orientation.z = q_w_curr.z();
+			odomAftMapped.pose.pose.orientation.w = q_w_curr.w();
+			odomAftMapped.pose.pose.position.x = t_w_curr.x();
+			odomAftMapped.pose.pose.position.y = t_w_curr.y();
+			odomAftMapped.pose.pose.position.z = t_w_curr.z();
+			pubOdomAftMapped.publish(odomAftMapped);
+
+			geometry_msgs::PoseStamped laserAfterMappedPose;
+			laserAfterMappedPose.header = odomAftMapped.header;
+			laserAfterMappedPose.pose = odomAftMapped.pose.pose;
+			laserAfterMappedPath.header.stamp = odomAftMapped.header.stamp;
+			laserAfterMappedPath.header.frame_id = "/camera_init";
+			laserAfterMappedPath.poses.push_back(laserAfterMappedPose);
+			pubLaserAfterMappedPath.publish(laserAfterMappedPath);
 
 			frameCount++;
 		}
