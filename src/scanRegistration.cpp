@@ -36,7 +36,6 @@
 #include <string>
 #include "loam_velodyne/common.h"
 #include "loam_velodyne/tic_toc.h"
-#include <opencv/cv.h>
 #include <nav_msgs/Odometry.h>
 #include <opencv/cv.h>
 #include <pcl_conversions/pcl_conversions.h>

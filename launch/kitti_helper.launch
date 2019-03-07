@@ -1,0 +1,11 @@
+<launch>
+    
+
+    <node name="loam_velodyne" pkg="loam_velodyne" type="kittiHelper" output="screen"> 
+        <param name="dataset_folder" type="string" value="/data/KITTI/odometry/" />
+        <param name="sequence_number" type="string" value="00" />
+        <param name="to_bag" type="bool" value="false" />
+        <param name="output_bag_file" type="string" value="/tmp/kitti.bag" /> <!-- replace with your output folder -->
+        <param name="publish_delay" type="int" value="1" />
+    </node>
+</launch>

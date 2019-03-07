@@ -11,8 +11,12 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   roscpp
   rospy
+  rosbag
   std_msgs
-  tf)
+  image_transport
+  cv_bridge
+  tf
+)
 
 #find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
@@ -23,7 +27,8 @@ include_directories(
   include
 	${catkin_INCLUDE_DIRS} 
 	${PCL_INCLUDE_DIRS}
-  ${CERES_INCLUDE_DIRS})
+  ${CERES_INCLUDE_DIRS}
+  ${OpenCV_INCLUDE_DIRS})
 
 catkin_package(
   CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs
@@ -40,6 +45,9 @@ target_link_libraries(laserOdometry ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${CERES
 
 add_executable(laserMapping src/laserMapping.cpp)
 target_link_libraries(laserMapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${CERES_LIBRARIES})
+
+add_executable(kittiHelper src/kittiHelper.cpp)
+target_link_libraries(kittiHelper ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS})
 
 
 

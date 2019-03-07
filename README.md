@@ -5,7 +5,7 @@
 A-LOAM is an Advanced implenmentation of LOAM (J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time), which uses Eigen and Ceres to Solver to simplify code structure. This code is modified from [LOAM_NOTED](https://github.com/cuitaixiang/LOAM_NOTED).
 
 
-**Authors:** [Tong Qin](http://www.qintonguav.com), [Shaozu Cao](https://github.com/shaozu/LOAM_NOTED), and [Shaojie Shen](http://www.ece.ust.hk/ece.php/profile/facultydetail/eeshaojie) from the [Aerial Robotics Group](http://uav.ust.hk/), [HKUST](https://www.ust.hk/)
+**Authors:** [Tong Qin](http://www.qintonguav.com), [Shaozu Cao](https://github.com/shaozu), and [Shaojie Shen](http://www.ece.ust.hk/ece.php/profile/facultydetail/eeshaojie) from the [Aerial Robotics Group](http://uav.ust.hk/), [HKUST](https://www.ust.hk/)
 
 
 ## 1. Prerequisites
@@ -42,10 +42,10 @@ Download [NSH indoor outdoor](https://drive.google.com/file/d/1s05tBQOLNEDDurlg4
 
 
 ## 4. KITTI Example (Velodyne HDL-64)
-Download [KITTI Odometry dataset](http://www.cvlibs.net/datasets/kitti/eval_odometry.php) to YOUR_DATASET_FOLDER, and convert it into ROS bag. We take sequences 00 for example. [00](download link)
+Download [KITTI Odometry dataset](http://www.cvlibs.net/datasets/kitti/eval_odometry.php) to YOUR_DATASET_FOLDER and set the `dataset_folder` and `sequence_number` parameters in `kitti_helper.launch` file. Note you also convert KITTI dataset to bag file for easy use by setting proper parameters in `kitti_helper.launch`. 
 
 ```
     roslaunch loam_velodyne loam_velodyne_64.launch
-    rosbag play YOUR_DATASET_FOLDER/00.bag
+    roslaunch loam_velodyne kitti_helper.launch
 ```
 
