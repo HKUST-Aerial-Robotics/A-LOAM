@@ -1,3 +1,6 @@
+// Author:   Tong Qin               qintonguav@gmail.com
+// 	         Shaozu Cao 		    saozu.cao@connect.ust.hk
+
 #include <ceres/ceres.h>
 #include <ceres/rotation.h>
 #include <eigen3/Eigen/Dense>

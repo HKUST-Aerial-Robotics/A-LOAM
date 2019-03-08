@@ -1,3 +1,6 @@
+// Author:   Tong Qin               qintonguav@gmail.com
+// 	         Shaozu Cao 		    saozu.cao@connect.ust.hk
+
 #include <iostream>
 #include <fstream>
 #include <iterator>

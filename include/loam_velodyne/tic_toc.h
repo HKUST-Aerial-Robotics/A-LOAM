@@ -1,3 +1,6 @@
+// Author:   Tong Qin               qintonguav@gmail.com
+// 	         Shaozu Cao 		    saozu.cao@connect.ust.hk
+
 #pragma once
 
 #include <ctime>

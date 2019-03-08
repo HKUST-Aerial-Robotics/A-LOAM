@@ -1,11 +1,12 @@
 # A-LOAM
 ## Advanced implementation of LOAM
 
+A-LOAM is an Advanced implementation of LOAM (J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time), which uses Eigen and Ceres Solver to simplify code structure. This code is modified from LOAM and [LOAM_NOTED](https://github.com/cuitaixiang/LOAM_NOTED). Compared with origin code, this code is more clean and simpler without complicated mathematical derivation and redundant operations. This code also achieves more accurate and stable performance. No theory contribution, just engineering works. This code may be the best open-sourced implementation of LOAM on github.
 
-A-LOAM is an Advanced implementation of LOAM (J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time), which uses Eigen and Ceres to Solver to simplify code structure. This code is modified from [LOAM_NOTED](https://github.com/cuitaixiang/LOAM_NOTED).
+<img src="https://github.com/HKUST-Aerial-Robotics/VINS-Fusion/blob/devel/picture/kitti.png" width = 55% height = 55% div align=left />
 
 
-**Authors:** [Tong Qin](http://www.qintonguav.com), [Shaozu Cao](https://github.com/shaozu), and [Shaojie Shen](http://www.ece.ust.hk/ece.php/profile/facultydetail/eeshaojie) from the [Aerial Robotics Group](http://uav.ust.hk/), [HKUST](https://www.ust.hk/)
+**Modifier:** [Tong Qin](http://www.qintonguav.com), [Shaozu Cao](https://github.com/shaozu)
 
 
 ## 1. Prerequisites
@@ -48,4 +49,5 @@ Download [KITTI Odometry dataset](http://www.cvlibs.net/datasets/kitti/eval_odom
     roslaunch loam_velodyne loam_velodyne_64.launch
     roslaunch loam_velodyne kitti_helper.launch
 ```
+<img src="https://github.com/HKUST-Aerial-Robotics/A-LOAM/blob/devel/picture/kitti_gif.gif" width = 720 height = 351 />
 
