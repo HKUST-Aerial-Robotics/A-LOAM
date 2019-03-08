@@ -5,6 +5,12 @@ A-LOAM is an Advanced implementation of LOAM (J. Zhang and S. Singh. LOAM: Lidar
 
 <img src="https://github.com/HKUST-Aerial-Robotics/A-LOAM/blob/devel/picture/kitti.png" width = 55% height = 55%/>
 
+**Modification:**
+
+1. Replace complicated mathematical operation by Eigen and Ceres Solver. No Euler angle, no derivation any more.
+2. Remove useless and redundant operation. The code structure is clean and readable.
+3. Support Velodyne 64 on KITTI. Better performance.
+
 
 **Modifier:** [Tong Qin](http://www.qintonguav.com), [Shaozu Cao](https://github.com/shaozu)
 
