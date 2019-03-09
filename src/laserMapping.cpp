@@ -36,7 +36,7 @@
 
 #include <math.h>
 #include <vector>
-#include <loam_velodyne/common.h>
+#include <aloam_velodyne/common.h>
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
 #include <geometry_msgs/PoseStamped.h>
@@ -59,8 +59,8 @@
 #include <string>
 
 #include "lidarFactor.hpp"
-#include "loam_velodyne/common.h"
-#include "loam_velodyne/tic_toc.h"
+#include "aloam_velodyne/common.h"
+#include "aloam_velodyne/tic_toc.h"
 
 
 int frameCount = 0;
@@ -513,7 +513,6 @@ void process()
 			int laserCloudValidNum = 0;
 			int laserCloudSurroundNum = 0;
 
-			TicToc t_vis;
 			for (int i = centerCubeI - 2; i <= centerCubeI + 2; i++)
 			{
 				for (int j = centerCubeJ - 2; j <= centerCubeJ + 2; j++)
@@ -532,8 +531,6 @@ void process()
 					}
 				}
 			}
-			printf("t_vis time %f ms \n", t_vis.toc());
-			printf("vis num %d \n", laserCloudValidNum);
 
 			laserCloudCornerFromMap->clear();
 			laserCloudSurfFromMap->clear();
@@ -585,7 +582,7 @@ void process()
 						pointOri = laserCloudCornerStack->points[i];
 						//double sqrtDis = pointOri.x * pointOri.x + pointOri.y * pointOri.y + pointOri.z * pointOri.z;
 						pointAssociateToMap(&pointOri, &pointSel);
-						kdtreeCornerFromMap->nearestKSearch(pointSel, 5, pointSearchInd, pointSearchSqDis); //寻找最近距离五个点
+						kdtreeCornerFromMap->nearestKSearch(pointSel, 5, pointSearchInd, pointSearchSqDis); 
 
 						if (pointSearchSqDis[4] < 1.0)
 						{ 
@@ -710,8 +707,8 @@ void process()
 						*/
 					}
 
-					printf("corner num %d used corner num %d \n", laserCloudCornerStackNum, corner_num);
-					printf("surf num %d used surf num %d \n", laserCloudSurfStackNum, surf_num);
+					//printf("corner num %d used corner num %d \n", laserCloudCornerStackNum, corner_num);
+					//printf("surf num %d used surf num %d \n", laserCloudSurfStackNum, surf_num);
 
 					printf("mapping data assosiation time %f ms \n", t_data.toc());
 
