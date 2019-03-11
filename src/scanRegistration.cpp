@@ -168,15 +168,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
 
         if (N_SCANS == 16)
         {
-            int roundedAngle = int(angle + (angle < 0.0 ? -0.5 : +0.5));
-            if (roundedAngle > 0)
-            {
-                scanID = roundedAngle;
-            }
-            else
-            {
-                scanID = roundedAngle + (N_SCANS - 1);
-            }
+            scanID = int((angle + 15) / 2 + 0.5);
             if (scanID > (N_SCANS - 1) || scanID < 0)
             {
                 count--;
