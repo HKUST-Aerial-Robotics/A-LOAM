@@ -103,6 +103,10 @@ pcl::PointCloud<PointType>::Ptr laserCloudFullRes(new pcl::PointCloud<PointType>
 pcl::PointCloud<PointType>::Ptr laserCloudCornerArray[laserCloudNum];
 pcl::PointCloud<PointType>::Ptr laserCloudSurfArray[laserCloudNum];
 
+// tmp variable
+pcl::PointCloud<PointType>::Ptr laserCloudCornerArray2[laserCloudNum];
+pcl::PointCloud<PointType>::Ptr laserCloudSurfArray2[laserCloudNum];
+
 //kd-tree
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeCornerFromMap(new pcl::KdTreeFLANN<PointType>());
 pcl::KdTreeFLANN<PointType>::Ptr kdtreeSurfFromMap(new pcl::KdTreeFLANN<PointType>());
@@ -783,19 +787,30 @@ void process()
 			}
 			printf("add points time %f ms\n", t_add.toc());
 
+			
 			TicToc t_filter;
 			for (int i = 0; i < laserCloudValidNum; i++)
 			{
 				int ind = laserCloudValidInd[i];
 
+				laserCloudCornerArray2[ind]->clear();
 				downSizeFilterCorner.setInputCloud(laserCloudCornerArray[ind]);
-				downSizeFilterCorner.filter(*laserCloudCornerArray[ind]);
+				downSizeFilterCorner.filter(*laserCloudCornerArray2[ind]);
 
+				laserCloudSurfArray2[ind]->clear();
 				downSizeFilterSurf.setInputCloud(laserCloudSurfArray[ind]);
-				downSizeFilterSurf.filter(*laserCloudSurfArray[ind]);
+				downSizeFilterSurf.filter(*laserCloudSurfArray2[ind]);
+
+				pcl::PointCloud<PointType>::Ptr laserCloudTemp = laserCloudCornerArray[ind];
+				laserCloudCornerArray[ind] = laserCloudCornerArray2[ind];
+				laserCloudCornerArray2[ind] = laserCloudTemp;
+
+				laserCloudTemp = laserCloudSurfArray[ind];
+				laserCloudSurfArray[ind] = laserCloudSurfArray2[ind];
+				laserCloudSurfArray2[ind] = laserCloudTemp;
 			}
 			printf("filter time %f ms \n", t_filter.toc());
-
+			
 			TicToc t_pub;
 			//publish surround map for every 5 frame
 			if (frameCount % 5 == 0)
@@ -911,6 +926,8 @@ int main(int argc, char **argv)
 	{
 		laserCloudCornerArray[i].reset(new pcl::PointCloud<PointType>());
 		laserCloudSurfArray[i].reset(new pcl::PointCloud<PointType>());
+		laserCloudCornerArray2[i].reset(new pcl::PointCloud<PointType>());
+		laserCloudSurfArray2[i].reset(new pcl::PointCloud<PointType>());
 	}
 
 	std::thread mapping_process{process};
