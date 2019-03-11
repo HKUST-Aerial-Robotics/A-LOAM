@@ -783,19 +783,24 @@ void process()
 			}
 			printf("add points time %f ms\n", t_add.toc());
 
+			
 			TicToc t_filter;
 			for (int i = 0; i < laserCloudValidNum; i++)
 			{
 				int ind = laserCloudValidInd[i];
 
+				pcl::PointCloud<PointType>::Ptr tmpCorner(new pcl::PointCloud<PointType>());
 				downSizeFilterCorner.setInputCloud(laserCloudCornerArray[ind]);
-				downSizeFilterCorner.filter(*laserCloudCornerArray[ind]);
+				downSizeFilterCorner.filter(*tmpCorner);
+				laserCloudCornerArray[ind] = tmpCorner;
 
+				pcl::PointCloud<PointType>::Ptr tmpSurf(new pcl::PointCloud<PointType>());
 				downSizeFilterSurf.setInputCloud(laserCloudSurfArray[ind]);
-				downSizeFilterSurf.filter(*laserCloudSurfArray[ind]);
+				downSizeFilterSurf.filter(*tmpSurf);
+				laserCloudSurfArray[ind] = tmpSurf;
 			}
 			printf("filter time %f ms \n", t_filter.toc());
-
+			
 			TicToc t_pub;
 			//publish surround map for every 5 frame
 			if (frameCount % 5 == 0)
