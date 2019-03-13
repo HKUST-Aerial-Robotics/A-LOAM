@@ -58,12 +58,12 @@ Download [KITTI Odometry dataset](http://www.cvlibs.net/datasets/kitti/eval_odom
 <img src="https://github.com/HKUST-Aerial-Robotics/A-LOAM/blob/devel/picture/kitti_gif.gif" width = 720 height = 351 />
 
 ## 5. Docker Support
-To further simplify the build process and be environment independent, we add docker support in our code. After [docker installation](https://docs.docker.com/install/linux/docker-ce/ubuntu/), you can build docker image by (may need `sudo` depends on your configuration):
+To further facilitate the building process, we add docker in our code. Docker environment is like a sandbox, thus makes our code environment-independent. To run with docker, first make sure [ros](http://wiki.ros.org/ROS/Installation) and [docker](https://docs.docker.com/install/linux/docker-ce/ubuntu/) are installed on your machine. Then add your account to `docker` group by `sudo usermod -aG docker $YOUR_USER_NAME`. **Relaunch the terminal**, type:
 ```
-cd docker
+cd ~/catkin_ws/src/A-LOAM/docker
 make build
 ```
-The build process may take a while depends on your machine. After that, launch rviz by `rviz ../rviz_cfg/aloam_velodyne.rviz`, followed by command `./run.sh 16` or `./run.sh 64` to run A-LOAM (again you may need `sudo`).
+The build process may take a while depends on your machine. After that, run `./run.sh 16` or `./run.sh 64` to launch A-LOAM, then you should be able to see the result.
 
 
 ## 6.Acknowledgements

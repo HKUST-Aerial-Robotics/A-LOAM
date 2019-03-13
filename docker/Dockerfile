@@ -42,20 +42,19 @@ RUN if [ "x$(nproc)" = "x1" ] ; then export USE_PROC=1 ; else export USE_PROC=$(
     
 # WORKDIR $CATKIN_WS/src
 
-# Clone A-LOAM
-# COPY ./ $CATKIN_WS/src/A-LOAM/
+# Copy A-LOAM
+COPY ./ $CATKIN_WS/src/A-LOAM/
+# use the following line if you only have this dockerfile
 # RUN git clone https://github.com/HKUST-Aerial-Robotics/A-LOAM.git
 
 # Build A-LOAM
-# WORKDIR $CATKIN_WS
-# ENV TERM xterm
-# ENV PYTHONIOENCODING UTF-8
-# RUN catkin config \
-#       --extend /opt/ros/$ROS_DISTRO \
-#       --cmake-args \
-#         -DCMAKE_BUILD_TYPE=Release && \
-#     catkin build
-
-# Source A-LOAM from entrypoint
-# RUN sed -i '/exec "$@"/i \
-# source "/root/catkin_ws/devel/setup.bash"' /ros_entrypoint.sh
+WORKDIR $CATKIN_WS
+ENV TERM xterm
+ENV PYTHONIOENCODING UTF-8
+RUN catkin config \
+      --extend /opt/ros/$ROS_DISTRO \
+      --cmake-args \
+        -DCMAKE_BUILD_TYPE=Release && \
+    catkin build && \
+    sed -i '/exec "$@"/i \
+            source "/root/catkin_ws/devel/setup.bash"' /ros_entrypoint.sh

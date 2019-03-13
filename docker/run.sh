@@ -25,6 +25,13 @@ if [ "$#" -ne 1 ]; then
   exit 1
 fi
 
+roscore &
+ROSCORE_PID=$!
+sleep 1
+
+rviz -d ../rviz_cfg/aloam_velodyne.rviz &
+RVIZ_PID=$!
+
 A_LOAM_DIR=$(abspath "..")
 
 if [ "$1" -eq 16 ]; then
@@ -41,7 +48,7 @@ if [ "$1" -eq 16 ]; then
             -DCMAKE_BUILD_TYPE=Release; \
         catkin build; \
         source devel/setup.bash; \
-        roslaunch aloam_velodyne aloam_velodyne_16.launch"
+        roslaunch aloam_velodyne aloam_velodyne_16.launch rviz:=false"
 elif [ "$1" -eq "64" ]; then
     docker run \
     -it \
@@ -56,5 +63,14 @@ elif [ "$1" -eq "64" ]; then
             -DCMAKE_BUILD_TYPE=Release; \
         catkin build; \
         source devel/setup.bash; \
-        roslaunch aloam_velodyne aloam_velodyne_64.launch"
+        roslaunch aloam_velodyne aloam_velodyne_64.launch rviz:=false"
+fi
+
+wait $ROSCORE_PID
+wait $RVIZ_PID
+
+if [[ $? -gt 128 ]]
+then
+    kill $ROSCORE_PID
+    kill $RVIZ_PID
 fi
