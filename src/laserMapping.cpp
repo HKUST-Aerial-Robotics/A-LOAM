@@ -872,6 +872,19 @@ void process()
 			laserAfterMappedPath.poses.push_back(laserAfterMappedPose);
 			pubLaserAfterMappedPath.publish(laserAfterMappedPath);
 
+			static tf::TransformBroadcaster br;
+			tf::Transform transform;
+			tf::Quaternion q;
+			transform.setOrigin(tf::Vector3(t_w_curr(0),
+											t_w_curr(1),
+											t_w_curr(2)));
+			q.setW(q_w_curr.w());
+			q.setX(q_w_curr.x());
+			q.setY(q_w_curr.y());
+			q.setZ(q_w_curr.z());
+			transform.setRotation(q);
+			br.sendTransform(tf::StampedTransform(transform, odomAftMapped.header.stamp, "/camera_init", "/aft_mapped"));
+
 			frameCount++;
 		}
 		std::chrono::milliseconds dura(2);
