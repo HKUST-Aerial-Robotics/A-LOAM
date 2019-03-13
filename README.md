@@ -1,7 +1,7 @@
 # A-LOAM
 ## Advanced implementation of LOAM
 
-A-LOAM is an Advanced implementation of LOAM (J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time), which uses Eigen and Ceres Solver to simplify code structure. This code is modified from LOAM and [LOAM_NOTED](https://github.com/cuitaixiang/LOAM_NOTED). Compared with origin code, this code is more clean and simpler without complicated mathematical derivation and redundant operations. This code also achieves more accurate and stable performance. It may be the best open-sourced implementation of LOAM on github.
+A-LOAM is an Advanced implementation of LOAM (J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time), which uses Eigen and Ceres Solver to simplify code structure. This code is modified from LOAM and [LOAM_NOTED](https://github.com/cuitaixiang/LOAM_NOTED). Compared with origin code, this code is more clean and simpler without complicated mathematical derivation and redundant operations. It is a good learning material for SLAM beginners. It may be more accurate and stable than any other implementation you can find on github.
 
 <img src="https://github.com/HKUST-Aerial-Robotics/A-LOAM/blob/devel/picture/kitti.png" width = 55% height = 55%/>
 
