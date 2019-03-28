@@ -49,6 +49,21 @@ if [ "$1" -eq 16 ]; then
         catkin build; \
         source devel/setup.bash; \
         roslaunch aloam_velodyne aloam_velodyne_16.launch rviz:=false"
+elif [ "$1" -eq "32" ]; then
+    docker run \
+    -it \
+    --rm \
+    --net=host \
+    -v ${A_LOAM_DIR}:/root/catkin_ws/src/A-LOAM/ \
+    ros:aloam \
+    /bin/bash -c \
+    "cd /root/catkin_ws/; \
+    catkin config \
+        --cmake-args \
+            -DCMAKE_BUILD_TYPE=Release; \
+        catkin build; \
+        source devel/setup.bash; \
+        roslaunch aloam_velodyne aloam_velodyne_32.launch rviz:=false"
 elif [ "$1" -eq "64" ]; then
     docker run \
     -it \

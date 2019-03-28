@@ -1,0 +1,26 @@
+<launch>
+    
+    <param name="scan_line" type="int" value="32" />
+
+    <!-- if 1, do mapping 10 Hz, if 2, do mapping 5 Hz. Suggest to use 1, it will adjust frequence automaticlly -->
+    <param name="mapping_skip_frame" type="int" value="1" />
+
+    <!-- remove too closed points -->
+    <param name="minimum_range" type="double" value="0.3"/>
+
+
+    <param name="mapping_line_resolution" type="double" value="0.2"/>
+    <param name="mapping_plane_resolution" type="double" value="0.4"/>
+
+    <node pkg="aloam_velodyne" type="ascanRegistration" name="ascanRegistration" output="screen" />
+
+    <node pkg="aloam_velodyne" type="alaserOdometry" name="alaserOdometry" output="screen" />
+
+    <node pkg="aloam_velodyne" type="alaserMapping" name="alaserMapping" output="screen" />
+
+    <arg name="rviz" default="false" />
+    <group if="$(arg rviz)">
+        <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find aloam_velodyne)/rviz_cfg/aloam_velodyne.rviz" />
+    </group>
+
+</launch>
