@@ -68,6 +68,45 @@ int cloudSortInd[400000];
 int cloudNeighborPicked[400000];
 int cloudLabel[400000];
 
+enum class LidarModel
+{
+    VLP16,
+    HDL32,
+    HDL64,
+    VLP32,
+    VLS128
+};
+
+LidarModel lidar_model_{LidarModel(0)};
+bool lidar_distribution_uniform_{true};
+std::vector<float> angles_vertical;
+
+
+template<typename BidirectionalIterator, typename T>
+BidirectionalIterator getClosest(BidirectionalIterator first,
+                                 BidirectionalIterator last,
+                                 const T &value)
+{
+    BidirectionalIterator before = std::lower_bound(first, last, value);
+
+    if (before == first) return first;
+    if (before == last) return --last; // iterator must be bidirectional
+
+    BidirectionalIterator after = before;
+    --before;
+
+    return (*after - value) < (value - *before) ? after : before;
+}
+
+template<typename BidirectionalIterator, typename T>
+std::size_t getClosestIndex(BidirectionalIterator first,
+                            BidirectionalIterator last,
+                            const T &value)
+{
+    return std::distance(first, getClosest(first, last, value));
+}
+
+
 bool comp(int i, int j)
 { return (cloudCurvature[i] < cloudCurvature[j]); }
 
@@ -167,43 +206,62 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
         float angle = atan(point.z / sqrt(point.x * point.x + point.y * point.y)) * 180 / M_PI;
         int scanID = 0;
 
-        if (N_SCANS == 16)
+        if (lidar_distribution_uniform_)
         {
-            scanID = int((angle + 15) / 2 + 0.5);
-            if (scanID > (N_SCANS - 1) || scanID < 0)
+            if (N_SCANS == 16)
             {
-                count--;
-                continue;
+                // VLP16
+                scanID = int((angle + 15) / 2 + 0.5);
+                if (scanID > (N_SCANS - 1) || scanID < 0)
+                {
+                    count--;
+                    continue;
+                }
             }
-        }
-        else if (N_SCANS == 32)
-        {
-            scanID = int((angle + 92.0 / 3.0) * 3.0 / 4.0);
-            if (scanID > (N_SCANS - 1) || scanID < 0)
+            else if (N_SCANS == 32)
             {
-                count--;
-                continue;
+                // HDL32
+                scanID = int((angle + 92.0 / 3.0) * 3.0 / 4.0);
+                if (scanID > (N_SCANS - 1) || scanID < 0)
+                {
+                    count--;
+                    continue;
+                }
             }
-        }
-        else if (N_SCANS == 64)
-        {
-            if (angle >= -8.83)
-                scanID = int((2 - angle) * 3.0 + 0.5);
-            else
-                scanID = N_SCANS / 2 + int((-8.83 - angle) * 2.0 + 0.5);
+            else if (N_SCANS == 64)
+            {
+                // HDL64
+                if (angle >= -8.83)
+                    scanID = int((2 - angle) * 3.0 + 0.5);
+                else
+                    scanID = N_SCANS / 2 + int((-8.83 - angle) * 2.0 + 0.5);
 
-            // use [0 50]  > 50 remove outlies 
-            if (angle > 2 || angle < -24.33 || scanID > 50 || scanID < 0)
+                // use [0 50]  > 50 remove outlies
+                if (angle > 2 || angle < -24.33 || scanID > 50 || scanID < 0)
+                {
+                    count--;
+                    continue;
+                }
+            }
+            else
             {
-                count--;
-                continue;
+                printf("wrong scan number\n");
+                ROS_BREAK();
             }
         }
         else
         {
-            printf("wrong scan number\n");
-            ROS_BREAK();
+            // VLP32, VLS128
+//      std::cout << "angle: " << angle << std::endl;
+//      std::cout << "closesto: " << getClosestIndex(angels.begin(), angels.end(), angle) << std::endl;
+            scanID = getClosestIndex(angles_vertical.begin(), angles_vertical.end(), angle);
+            if (scanID > (N_SCANS - 1) || scanID < 0)
+            {
+                count--;
+                continue;
+            }
         }
+
         //printf("angle %f scanID %d \n", angle, scanID);
 
         float ori = -atan2(point.y, point.x);
@@ -464,17 +522,234 @@ int main(int argc, char **argv)
     ros::init(argc, argv, "scanRegistration");
     ros::NodeHandle nh;
 
-    nh.param<int>("scan_line", N_SCANS, 16);
+    std::vector<std::string> lidar_model_to_str{
+        "VLP16",
+        "HDL32",
+        "HDL64",
+        "VLP32",
+        "VLS128"
+    };
+
+//  VLP16, HDL32, HDL64, VLP32, VLS128
+
+    std::string lidar_model_str;
+    nh.param<std::string>("lidar_model", lidar_model_str, lidar_model_to_str.front());
+
+    for (size_t i = 0; i < lidar_model_to_str.size(); ++i)
+    {
+        if (lidar_model_str == lidar_model_to_str[i])
+        {
+            lidar_model_ = LidarModel(i);
+            std::cout << "Found the lidar model: " << lidar_model_to_str[i] << std::endl;
+            break;
+        }
+    }
+
+
+    switch (lidar_model_)
+    {
+        case LidarModel::VLP16:
+        {
+            lidar_distribution_uniform_ = true;
+            N_SCANS = 16;
+            break;
+        }
+        case LidarModel::HDL32:
+        {
+            lidar_distribution_uniform_ = true;
+            N_SCANS = 32;
+            break;
+        }
+        case LidarModel::HDL64:
+        {
+            lidar_distribution_uniform_ = true;
+            N_SCANS = 64;
+            break;
+        }
+
+        case LidarModel::VLP32:
+        {
+            lidar_distribution_uniform_ = false;
+            N_SCANS = 32;
+            angles_vertical = {
+                -25,
+                -15.639,
+                -11.31,
+                -8.843,
+                -7.254,
+                -6.148,
+                -5.333,
+                -4.667,
+                -4,
+                -3.667,
+                -3.333,
+                -3,
+                -2.667,
+                -2.333,
+                -2,
+                -1.667,
+                -1.333,
+                -1,
+                -0.667,
+                -0.333,
+                0,
+                0.333,
+                0.667,
+                1,
+                1.333,
+                1.667,
+                2.333,
+                3.333,
+                4.667,
+                7,
+                10.333,
+                15
+            };
+            break;
+        }
+
+        case LidarModel::VLS128:
+        {
+            lidar_distribution_uniform_ = false;
+            N_SCANS = 128;
+            angles_vertical = {
+                -25,
+                -19.582,
+                -16.042,
+                -13.565,
+                -11.742,
+                -10.346,
+                -9.244,
+                -8.352,
+                -7.65,
+                -7.15,
+                -6.85,
+                -6.65,
+                -6.5,
+                -6.39,
+                -6.28,
+                -6.17,
+                -6.06,
+                -5.95,
+                -5.84,
+                -5.73,
+                -5.62,
+                -5.51,
+                -5.4,
+                -5.29,
+                -5.18,
+                -5.07,
+                -4.96,
+                -4.85,
+                -4.74,
+                -4.63,
+                -4.52,
+                -4.41,
+                -4.3,
+                -4.19,
+                -4.08,
+                -3.97,
+                -3.86,
+                -3.75,
+                -3.64,
+                -3.53,
+                -3.42,
+                -3.31,
+                -3.2,
+                -3.09,
+                -2.98,
+                -2.87,
+                -2.76,
+                -2.65,
+                -2.54,
+                -2.43,
+                -2.32,
+                -2.21,
+                -2.1,
+                -1.99,
+                -1.88,
+                -1.77,
+                -1.66,
+                -1.55,
+                -1.44,
+                -1.33,
+                -1.22,
+                -1.11,
+                -1,
+                -0.89,
+                -0.78,
+                -0.67,
+                -0.56,
+                -0.45,
+                -0.34,
+                -0.23,
+                -0.12,
+                -0.01,
+                0.1,
+                0.21,
+                0.32,
+                0.43,
+                0.54,
+                0.65,
+                0.76,
+                0.87,
+                0.98,
+                1.09,
+                1.2,
+                1.31,
+                1.42,
+                1.53,
+                1.64,
+                1.75,
+                1.86,
+                1.97,
+                2.08,
+                2.19,
+                2.3,
+                2.41,
+                2.52,
+                2.63,
+                2.74,
+                2.85,
+                2.96,
+                3.07,
+                3.18,
+                3.29,
+                3.4,
+                3.51,
+                3.62,
+                3.73,
+                3.84,
+                3.95,
+                4.06,
+                4.17,
+                4.28,
+                4.39,
+                4.5,
+                4.61,
+                4.72,
+                4.83,
+                4.98,
+                5.18,
+                5.43,
+                5.73,
+                6.08,
+                6.48,
+                6.98,
+                7.58,
+                8.43,
+                9.7,
+                11.75,
+                15
+            };
+            break;
+        }
+
+    }
 
     nh.param<double>("minimum_range", MINIMUM_RANGE, 0.1);
 
     printf("scan line number %d \n", N_SCANS);
-
-    if (N_SCANS != 16 && N_SCANS != 32 && N_SCANS != 64)
-    {
-        printf("only support velodyne with 16, 32 or 64 scan line!");
-        return 0;
-    }
 
     ros::Subscriber subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 100, laserCloudHandler);
 

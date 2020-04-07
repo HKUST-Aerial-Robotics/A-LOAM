@@ -1,17 +1,17 @@
 <launch>
-    
+
     <!-- VLP16, HDL32, HDL64, VLP32, VLS128 -->
-    <param name="lidar_model" type="string" value="HDL64" />
+    <param name="lidar_model" type="string" value="VLP32" />
 
     <!-- if 1, do mapping 10 Hz, if 2, do mapping 5 Hz. Suggest to use 1, it will adjust frequence automaticlly -->
     <param name="mapping_skip_frame" type="int" value="1" />
 
     <!-- remove too closed points -->
-    <param name="minimum_range" type="double" value="5"/>
+    <param name="minimum_range" type="double" value="0.3"/>
 
 
-    <param name="mapping_line_resolution" type="double" value="0.4"/>
-    <param name="mapping_plane_resolution" type="double" value="0.8"/>
+    <param name="mapping_line_resolution" type="double" value="0.2"/>
+    <param name="mapping_plane_resolution" type="double" value="0.4"/>
 
     <node pkg="aloam_velodyne" type="ascanRegistration" name="ascanRegistration" output="screen" />
 
