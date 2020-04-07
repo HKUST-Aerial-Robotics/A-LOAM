@@ -1,6 +1,7 @@
 <launch>
-    
-    <param name="scan_line" type="int" value="32" />
+
+    <!-- VLP16, HDL32, HDL64, VLP32, VLS128 -->
+    <param name="lidar_model" type="string" value="HDL32" />
 
     <!-- if 1, do mapping 10 Hz, if 2, do mapping 5 Hz. Suggest to use 1, it will adjust frequence automaticlly -->
     <param name="mapping_skip_frame" type="int" value="1" />
