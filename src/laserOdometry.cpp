@@ -3,7 +3,7 @@
 //     Robotics: Science and Systems Conference (RSS). Berkeley, CA, July 2014. 
 
 // Modifier: Tong Qin               qintonguav@gmail.com
-// 	         Shaozu Cao 		    saozu.cao@connect.ust.hk
+//              Shaozu Cao             saozu.cao@connect.ust.hk
 
 
 // Copyright 2013, Ji Zhang, Carnegie Mellon University
@@ -107,6 +107,10 @@ std::queue<sensor_msgs::PointCloud2ConstPtr> surfLessFlatBuf;
 std::queue<sensor_msgs::PointCloud2ConstPtr> fullPointsBuf;
 std::mutex mBuf;
 
+std::string camera_frame_id;
+std::string camera_init_frame_id;
+std::string laser_odom_frame_id;
+
 // undistort lidar point
 void TransformToStart(PointType const *const pi, PointType *const po)
 {
@@ -190,7 +194,7 @@ int main(int argc, char **argv)
 
     nh_priv.param<int>("mapping_skip_frame", skipFrameNum, 2);
 
-    printf("Mapping %d Hz \n", 10 / skipFrameNum);
+    //printf("Mapping %d Hz \n", 10 / skipFrameNum);
 
     ros::Subscriber subCornerPointsSharp = nh.subscribe<sensor_msgs::PointCloud2>("laser_cloud_sharp", 100, laserCloudSharpHandler);
 
@@ -214,6 +218,16 @@ int main(int argc, char **argv)
 
     nav_msgs::Path laserPath;
 
+
+
+    nh_priv.param<std::string>("camera_frame_id", camera_frame_id, "camera");
+
+    nh_priv.param<std::string>("camera_init_frame_id", camera_init_frame_id, "camera_init");
+
+    nh_priv.param<std::string>("laser_odom_frame_id", laser_odom_frame_id, "laser_odom");
+
+
+
     int frameCount = 0;
     ros::Rate rate(100);
 
@@ -236,7 +250,7 @@ int main(int argc, char **argv)
                 timeSurfPointsFlat != timeLaserCloudFullRes ||
                 timeSurfPointsLessFlat != timeLaserCloudFullRes)
             {
-                printf("unsync messeage!");
+                //printf("unsync messeage!");
                 ROS_BREAK();
             }
 
@@ -483,11 +497,11 @@ int main(int argc, char **argv)
                     }
 
                     //printf("coner_correspondance %d, plane_correspondence %d \n", corner_correspondence, plane_correspondence);
-                    printf("data association time %f ms \n", t_data.toc());
+                    //printf("data association time %f ms \n", t_data.toc());
 
                     if ((corner_correspondence + plane_correspondence) < 10)
                     {
-                        printf("less correspondence! *************************************************\n");
+                        //printf("less correspondence! *************************************************\n");
                     }
 
                     TicToc t_solver;
@@ -497,9 +511,9 @@ int main(int argc, char **argv)
                     options.minimizer_progress_to_stdout = false;
                     ceres::Solver::Summary summary;
                     ceres::Solve(options, &problem, &summary);
-                    printf("solver time %f ms \n", t_solver.toc());
+                    //printf("solver time %f ms \n", t_solver.toc());
                 }
-                printf("optimization twice time %f \n", t_opt.toc());
+                //printf("optimization twice time %f \n", t_opt.toc());
 
                 t_w_curr = t_w_curr + q_w_curr * t_last_curr;
                 q_w_curr = q_w_curr * q_last_curr;
@@ -509,8 +523,8 @@ int main(int argc, char **argv)
 
             // publish odometry
             nav_msgs::Odometry laserOdometry;
-            laserOdometry.header.frame_id = "/camera_init";
-            laserOdometry.child_frame_id = "/laser_odom";
+            laserOdometry.header.frame_id = camera_init_frame_id;
+            laserOdometry.child_frame_id = laser_odom_frame_id;
             laserOdometry.header.stamp = ros::Time().fromSec(timeSurfPointsLessFlat);
             laserOdometry.pose.pose.orientation.x = q_w_curr.x();
             laserOdometry.pose.pose.orientation.y = q_w_curr.y();
@@ -521,12 +535,28 @@ int main(int argc, char **argv)
             laserOdometry.pose.pose.position.z = t_w_curr.z();
             pubLaserOdometry.publish(laserOdometry);
 
+            static tf::TransformBroadcaster br;
+            tf::Transform transform;
+            tf::Quaternion q;
+            transform.setOrigin(tf::Vector3(t_w_curr(0),
+                                            t_w_curr(1),
+                                            t_w_curr(2)));
+            q.setW(q_w_curr.w());
+            q.setX(q_w_curr.x());
+            q.setY(q_w_curr.y());
+            q.setZ(q_w_curr.z());
+            transform.setRotation(q);
+            br.sendTransform(tf::StampedTransform(transform,
+                                                  laserOdometry.header.stamp,
+                                                  camera_init_frame_id,
+                                                  laser_odom_frame_id));
+
             geometry_msgs::PoseStamped laserPose;
             laserPose.header = laserOdometry.header;
             laserPose.pose = laserOdometry.pose.pose;
             laserPath.header.stamp = laserOdometry.header.stamp;
             laserPath.poses.push_back(laserPose);
-            laserPath.header.frame_id = "/camera_init";
+            laserPath.header.frame_id = camera_init_frame_id;
             pubLaserPath.publish(laserPath);
 
             // transform corner features and plane features to the scan end point
@@ -574,23 +604,23 @@ int main(int argc, char **argv)
                 sensor_msgs::PointCloud2 laserCloudCornerLast2;
                 pcl::toROSMsg(*laserCloudCornerLast, laserCloudCornerLast2);
                 laserCloudCornerLast2.header.stamp = ros::Time().fromSec(timeSurfPointsLessFlat);
-                laserCloudCornerLast2.header.frame_id = "/camera";
+                laserCloudCornerLast2.header.frame_id = camera_frame_id;
                 pubLaserCloudCornerLast.publish(laserCloudCornerLast2);
 
                 sensor_msgs::PointCloud2 laserCloudSurfLast2;
                 pcl::toROSMsg(*laserCloudSurfLast, laserCloudSurfLast2);
                 laserCloudSurfLast2.header.stamp = ros::Time().fromSec(timeSurfPointsLessFlat);
-                laserCloudSurfLast2.header.frame_id = "/camera";
+                laserCloudSurfLast2.header.frame_id = camera_frame_id;
                 pubLaserCloudSurfLast.publish(laserCloudSurfLast2);
 
                 sensor_msgs::PointCloud2 laserCloudFullRes3;
                 pcl::toROSMsg(*laserCloudFullRes, laserCloudFullRes3);
                 laserCloudFullRes3.header.stamp = ros::Time().fromSec(timeSurfPointsLessFlat);
-                laserCloudFullRes3.header.frame_id = "/camera";
+                laserCloudFullRes3.header.frame_id = camera_frame_id;
                 pubLaserCloudFullRes.publish(laserCloudFullRes3);
             }
-            printf("publication time %f ms \n", t_pub.toc());
-            printf("whole laserOdometry time %f ms \n \n", t_whole.toc());
+            //printf("publication time %f ms \n", t_pub.toc());
+            //printf("whole laserOdometry time %f ms \n \n", t_whole.toc());
             if(t_whole.toc() > 100)
                 ROS_WARN("odometry process over 100ms");
 

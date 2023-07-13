@@ -1,0 +1,4 @@
+aft_mapped_frame_id: $(arg robot_id)/base_link
+camera_frame_id: $(arg robot_id)/rslidar
+camera_init_frame_id: $(arg robot_id)/map
+laser_odom_frame_id: $(arg robot_id)/laser_odom

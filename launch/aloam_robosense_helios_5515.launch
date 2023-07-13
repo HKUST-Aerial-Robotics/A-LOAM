@@ -1,0 +1,36 @@
+<launch>
+  <arg name="robot_id" value="$(optenv ROBOT_ID unnamed_robot)"/>
+
+
+
+  <group ns="$(arg robot_id)">
+
+    <node pkg="aloam_velodyne" type="ascanRegistration" name="ascanRegistration"
+        output="screen">
+      <rosparam command="load" subst_value="True"
+          file="$(dirname)/../config/aloam_velodyne.yaml"/>
+
+      <param name="scan_line" type="int" value="32"/>
+      <param name="minimum_range" type="double" value="0.3"/>
+    </node>
+
+    <node pkg="aloam_velodyne" type="alaserOdometry" name="alaserOdometry"
+        output="screen">
+      <rosparam command="load" subst_value="True"
+          file="$(dirname)/../config/aloam_velodyne.yaml"/>
+
+      <param name="mapping_skip_frame" type="int" value="1"/>
+    </node>
+
+    <node pkg="aloam_velodyne" type="alaserMapping" name="alaserMapping"
+        output="screen">
+      <rosparam command="load" subst_value="True"
+          file="$(dirname)/../config/aloam_velodyne.yaml"/>
+
+      <param name="mapping_line_resolution" type="double" value="0.2"/>
+      <param name="mapping_plane_resolution" type="double" value="0.4"/>
+    </node>
+
+  </group>
+
+</launch>
