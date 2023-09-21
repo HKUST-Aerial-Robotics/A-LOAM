@@ -1,0 +1,34 @@
+<launch>
+
+	<param name="scan_line" type="int" value="64" />
+
+	<param name="/use_sim_time" value="true" />
+
+	<param name="mapping_skip_frame" type="int" value="1" />
+
+	<param name="minimum_range" type="double" value="0.3" />
+
+	 <param name="points_topic" type="string" value="/hesai/pandar" />
+
+	<param name="mapping_line_resolution" type="double" value="0.2"/>
+
+	<param name="mapping_plane_resolution" type="double" value="0.4"/>
+
+	<node pkg="tf" type="static_transform_publisher" name="link_broadcaster" args="0 0 0 0 0 0 /base_link /camera_init  100" />
+	<node pkg="tf" type="static_transform_publisher" name="world_broadcaster" args="0 0 0 0 0 0 /world /base_link 100" />
+
+	<node pkg="tf2_tools" type="view_frames.py" name="frame_view" output="screen"/>
+
+
+	<node pkg="aloam_velodyne" type="HscanRegistration" name="HscanRegistration" output="screen" />
+
+	<node pkg="aloam_velodyne" type="alaserOdometry" name="alaserOdometry" output="screen" />
+
+	<node pkg="aloam_velodyne" type="alaserMapping" name="alaserMapping" output="screen" />
+
+	<arg name="rviz" default="true" />
+	<group if="$(arg rviz)">
+		<node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find aloam_velodyne)/rviz_cfg/aloam_hesai.rviz" />
+	</group>
+
+</launch>

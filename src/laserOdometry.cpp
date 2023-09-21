@@ -107,6 +107,9 @@ std::queue<sensor_msgs::PointCloud2ConstPtr> surfLessFlatBuf;
 std::queue<sensor_msgs::PointCloud2ConstPtr> fullPointsBuf;
 std::mutex mBuf;
 
+std::string camera_init_topic;
+std::string laser_odom_topic;
+
 // undistort lidar point
 void TransformToStart(PointType const *const pi, PointType *const po)
 {
@@ -189,6 +192,9 @@ int main(int argc, char **argv)
     ros::NodeHandle nh;
 
     nh.param<int>("mapping_skip_frame", skipFrameNum, 2);
+
+    nh.param<std::string>("camera_init_topic", camera_init_topic, "camera_init");
+    nh.param<std::string>("laser_init_topic", laser_odom_topic, "laser_odom");
 
     printf("Mapping %d Hz \n", 10 / skipFrameNum);
 
@@ -509,8 +515,8 @@ int main(int argc, char **argv)
 
             // publish odometry
             nav_msgs::Odometry laserOdometry;
-            laserOdometry.header.frame_id = "/camera_init";
-            laserOdometry.child_frame_id = "/laser_odom";
+            laserOdometry.header.frame_id = camera_init_topic;
+            laserOdometry.child_frame_id = laser_odom_topic;
             laserOdometry.header.stamp = ros::Time().fromSec(timeSurfPointsLessFlat);
             laserOdometry.pose.pose.orientation.x = q_w_curr.x();
             laserOdometry.pose.pose.orientation.y = q_w_curr.y();
@@ -526,7 +532,7 @@ int main(int argc, char **argv)
             laserPose.pose = laserOdometry.pose.pose;
             laserPath.header.stamp = laserOdometry.header.stamp;
             laserPath.poses.push_back(laserPose);
-            laserPath.header.frame_id = "/camera_init";
+            laserPath.header.frame_id = camera_init_topic;
             pubLaserPath.publish(laserPath);
 
             // transform corner features and plane features to the scan end point
