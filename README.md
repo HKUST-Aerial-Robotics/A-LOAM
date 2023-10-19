@@ -42,7 +42,7 @@ Download [NSH indoor outdoor](https://drive.google.com/file/d/1s05tBQOLNEDDurlg4
 
 
 ## 4. KITTI Example (Velodyne HDL-64)
-Download [KITTI Odometry dataset](http://www.cvlibs.net/datasets/kitti/eval_odometry.php) to YOUR_DATASET_FOLDER and set the `dataset_folder` and `sequence_number` parameters in `kitti_helper.launch` file. Note you also convert KITTI dataset to bag file for easy use by setting proper parameters in `kitti_helper.launch`. 
+Download the [KITTI Odometry dataset](http://www.cvlibs.net/datasets/kitti/eval_odometry.php) to YOUR_DATASET_FOLDER and set the `dataset_folder` and `sequence_number` parameters in `kitti_helper.launch` file. Note you also convert KITTI dataset to bag file for easy use by setting proper parameters in `kitti_helper.launch`. 
 
 ```
     roslaunch aloam_velodyne aloam_velodyne_HDL_64.launch
