@@ -97,7 +97,7 @@ Eigen::Vector3d t_w_curr(0, 0, 0);
 double para_q[4] = {0, 0, 0, 1};
 double para_t[3] = {0, 0, 0};
 
-Eigen::Map<Eigen::Quaterniond> q_last_curr(para_q);
+Eigen::Map<Eigen::Quaterniond> q_last_curr(para_q); /* 和原始变量共享内存 */
 Eigen::Map<Eigen::Vector3d> t_last_curr(para_t);
 
 std::queue<sensor_msgs::PointCloud2ConstPtr> cornerSharpBuf;
@@ -107,6 +107,12 @@ std::queue<sensor_msgs::PointCloud2ConstPtr> surfLessFlatBuf;
 std::queue<sensor_msgs::PointCloud2ConstPtr> fullPointsBuf;
 std::mutex mBuf;
 
+/**
+ * 畸变校正，时间靠后的点向时间靠前的点校正
+ * 时间靠后的点是基于时间靠后的坐标系的
+ * 时间靠前的点是基于时间靠前的坐标系的
+ * 通过测量获取时间靠后的坐标系相对于间靠前坐标系的tf变换R和t，从而将时间靠后的点同步到时间靠前的坐标系
+ */
 // undistort lidar point
 void TransformToStart(PointType const *const pi, PointType *const po)
 {
@@ -129,7 +135,9 @@ void TransformToStart(PointType const *const pi, PointType *const po)
 }
 
 // transform all lidar points to the start of the next frame
-
+/**
+ * 时间靠前的点向时间靠后的点校正
+ */
 void TransformToEnd(PointType const *const pi, PointType *const po)
 {
     // undistort point first
@@ -137,7 +145,7 @@ void TransformToEnd(PointType const *const pi, PointType *const po)
     TransformToStart(pi, &un_point_tmp);
 
     Eigen::Vector3d un_point(un_point_tmp.x, un_point_tmp.y, un_point_tmp.z);
-    Eigen::Vector3d point_end = q_last_curr.inverse() * (un_point - t_last_curr);
+    Eigen::Vector3d point_end = q_last_curr.inverse() * (un_point - t_last_curr); /* 逆变换 */
 
     po->x = point_end.x();
     po->y = point_end.y();
@@ -304,10 +312,11 @@ int main(int argc, char **argv)
                         int closestPointInd = -1, minPointInd2 = -1;
                         if (pointSearchSqDis[0] < DISTANCE_SQ_THRESHOLD)
                         {
-                            closestPointInd = pointSearchInd[0];
-                            int closestPointScanID = int(laserCloudCornerLast->points[closestPointInd].intensity);
+                            closestPointInd = pointSearchInd[0]; /* 找到上一帧点云中距离当前点最近点的索引 */
+                            int closestPointScanID = int(laserCloudCornerLast->points[closestPointInd].intensity); /* 最近点的扫描线ID */
 
                             double minPointSqDis2 = DISTANCE_SQ_THRESHOLD;
+                            /* 找到离最近点最近的非同扫描线点（较大扫描线ID）索引 */
                             // search in the direction of increasing scan line
                             for (int j = closestPointInd + 1; j < (int)laserCloudCornerLast->points.size(); ++j)
                             {
@@ -334,6 +343,7 @@ int main(int argc, char **argv)
                                 }
                             }
 
+                            /* 找到离最近点最近的非同扫描线点（较小扫描线ID）索引 */
                             // search in the direction of decreasing scan line
                             for (int j = closestPointInd - 1; j >= 0; --j)
                             {
@@ -475,7 +485,7 @@ int main(int argc, char **argv)
                                     s = (surfPointsFlat->points[i].intensity - int(surfPointsFlat->points[i].intensity)) / SCAN_PERIOD;
                                 else
                                     s = 1.0;
-                                ceres::CostFunction *cost_function = LidarPlaneFactor::Create(curr_point, last_point_a, last_point_b, last_point_c, s);
+                                ceres::CostFunction *cost_function = LidarPlaneFactor::Create(curr_point, last_point_a, last_point_b, last_point_c, s); /* 结果b和a共扫描线，c不共扫描线 */
                                 problem.AddResidualBlock(cost_function, loss_function, para_q, para_t);
                                 plane_correspondence++;
                             }
@@ -496,7 +506,7 @@ int main(int argc, char **argv)
                     options.max_num_iterations = 4;
                     options.minimizer_progress_to_stdout = false;
                     ceres::Solver::Summary summary;
-                    ceres::Solve(options, &problem, &summary);
+                    ceres::Solve(options, &problem, &summary); /* TODO ceres的用法 */
                     printf("solver time %f ms \n", t_solver.toc());
                 }
                 printf("optimization twice time %f \n", t_opt.toc());
@@ -600,3 +610,4 @@ int main(int argc, char **argv)
     }
     return 0;
 }
+/* lyl read end 20260227 */
