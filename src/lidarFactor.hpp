@@ -32,8 +32,8 @@ struct LidarEdgeFactor
 		Eigen::Matrix<T, 3, 1> lp;
 		lp = q_last_curr * cp + t_last_curr;
 
-		Eigen::Matrix<T, 3, 1> nu = (lp - lpa).cross(lp - lpb);
-		Eigen::Matrix<T, 3, 1> de = lpa - lpb;
+		Eigen::Matrix<T, 3, 1> nu = (lp - lpa).cross(lp - lpb); /* 平行四边形两对边的叉积，等于面积 */
+		Eigen::Matrix<T, 3, 1> de = lpa - lpb; /* 两点的方向向量 */
 
 		residual[0] = nu.x() / de.norm();
 		residual[1] = nu.y() / de.norm();
