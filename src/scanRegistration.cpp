@@ -134,7 +134,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
     std::vector<int> indices;
 
     pcl::removeNaNFromPointCloud(laserCloudIn, laserCloudIn, indices);
-    removeClosedPointCloud(laserCloudIn, laserCloudIn, MINIMUM_RANGE);
+    removeClosedPointCloud(laserCloudIn, laserCloudIn, MINIMUM_RANGE); /* 移除距离雷达较近的点云 */
 
 
     int cloudSize = laserCloudIn.points.size();
@@ -142,7 +142,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
     float endOri = -atan2(laserCloudIn.points[cloudSize - 1].y,
                           laserCloudIn.points[cloudSize - 1].x) +
                    2 * M_PI;
-
+    /* 处理起始和结束角度 */
     if (endOri - startOri > 3 * M_PI)
     {
         endOri -= 2 * M_PI;
@@ -157,6 +157,9 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
     int count = cloudSize;
     PointType point;
     std::vector<pcl::PointCloud<PointType>> laserCloudScans(N_SCANS);
+    /* 计算每个点的扫描线ID和基于起始位置的角度赋值给intense字段，
+       整数表示扫描线ID，小数表示基于起始扫描点的时间，
+       估计用于去畸变 */
     for (int i = 0; i < cloudSize; i++)
     {
         point.x = laserCloudIn.points[i].x;
@@ -166,9 +169,10 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
         float angle = atan(point.z / sqrt(point.x * point.x + point.y * point.y)) * 180 / M_PI;
         int scanID = 0;
 
+        /* 根据角度计算扫描线ID, 垂直视场角-15-+15 */
         if (N_SCANS == 16)
         {
-            scanID = int((angle + 15) / 2 + 0.5);
+            scanID = int((angle + 15) / 2 + 0.5); /* id范围[0, 15]*/
             if (scanID > (N_SCANS - 1) || scanID < 0)
             {
                 count--;
@@ -237,22 +241,24 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
 
         float relTime = (ori - startOri) / (endOri - startOri);
         point.intensity = scanID + scanPeriod * relTime;
-        laserCloudScans[scanID].push_back(point); 
+        laserCloudScans[scanID].push_back(point); /* 将点云按照扫描线分组存储,每条线存储为不同的点云 */
     }
     
     cloudSize = count;
     printf("points size %d \n", cloudSize);
 
+    /* 将点云按照扫描线顺序重新存储，并记录每条线的开始与结束索引 */
     pcl::PointCloud<PointType>::Ptr laserCloud(new pcl::PointCloud<PointType>());
     for (int i = 0; i < N_SCANS; i++)
     { 
-        scanStartInd[i] = laserCloud->size() + 5;
-        *laserCloud += laserCloudScans[i];
-        scanEndInd[i] = laserCloud->size() - 6;
+        scanStartInd[i] = laserCloud->size() + 5; /* 每一条扫描线的起始索引 */
+        *laserCloud += laserCloudScans[i]; /* 按扫描线顺序重新存储的点云 */
+        scanEndInd[i] = laserCloud->size() - 6; /* 每一条扫描线的结束索引 */
     }
 
     printf("prepare time %f \n", t_prepare.toc());
 
+    /* 计算每个点的曲率 */
     for (int i = 5; i < cloudSize - 5; i++)
     { 
         float diffX = laserCloud->points[i - 5].x + laserCloud->points[i - 4].x + laserCloud->points[i - 3].x + laserCloud->points[i - 2].x + laserCloud->points[i - 1].x - 10 * laserCloud->points[i].x + laserCloud->points[i + 1].x + laserCloud->points[i + 2].x + laserCloud->points[i + 3].x + laserCloud->points[i + 4].x + laserCloud->points[i + 5].x;
@@ -268,66 +274,69 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
 
     TicToc t_pts;
 
-    pcl::PointCloud<PointType> cornerPointsSharp;
-    pcl::PointCloud<PointType> cornerPointsLessSharp;
-    pcl::PointCloud<PointType> surfPointsFlat;
-    pcl::PointCloud<PointType> surfPointsLessFlat;
+    pcl::PointCloud<PointType> cornerPointsSharp; /* 锐角点云 */
+    pcl::PointCloud<PointType> cornerPointsLessSharp; /* 次锐角点云 */
+    pcl::PointCloud<PointType> surfPointsFlat; /* 平面点云 */
+    pcl::PointCloud<PointType> surfPointsLessFlat; /* 次平面点云 */
 
     float t_q_sort = 0;
+    /* 每条扫描线分成6个区域，在每个区域内选取曲率最大的点作为锐角点，次锐角点，曲率最小的点作为平面点，次平面点 */
     for (int i = 0; i < N_SCANS; i++)
     {
         if( scanEndInd[i] - scanStartInd[i] < 6)
             continue;
         pcl::PointCloud<PointType>::Ptr surfPointsLessFlatScan(new pcl::PointCloud<PointType>);
-        for (int j = 0; j < 6; j++)
+        for (int j = 0; j < 6; j++) /* 将每条扫描线分成6个区域 */
         {
             int sp = scanStartInd[i] + (scanEndInd[i] - scanStartInd[i]) * j / 6; 
             int ep = scanStartInd[i] + (scanEndInd[i] - scanStartInd[i]) * (j + 1) / 6 - 1;
 
             TicToc t_tmp;
-            std::sort (cloudSortInd + sp, cloudSortInd + ep + 1, comp);
+            std::sort (cloudSortInd + sp, cloudSortInd + ep + 1, comp); /* 对6段分别按曲率由小到大排序 */
             t_q_sort += t_tmp.toc();
 
             int largestPickedNum = 0;
-            for (int k = ep; k >= sp; k--)
+            for (int k = ep; k >= sp; k--) /* 分别从后往前遍历扫描线6段点云 */
             {
                 int ind = cloudSortInd[k]; 
 
                 if (cloudNeighborPicked[ind] == 0 &&
-                    cloudCurvature[ind] > 0.1)
+                    cloudCurvature[ind] > 0.1) /* 对于曲率大于0.1的点， */
                 {
 
                     largestPickedNum++;
                     if (largestPickedNum <= 2)
                     {                        
                         cloudLabel[ind] = 2;
-                        cornerPointsSharp.push_back(laserCloud->points[ind]);
+                        cornerPointsSharp.push_back(laserCloud->points[ind]); /* 曲率最大的两个点 */
                         cornerPointsLessSharp.push_back(laserCloud->points[ind]);
                     }
                     else if (largestPickedNum <= 20)
                     {                        
                         cloudLabel[ind] = 1; 
-                        cornerPointsLessSharp.push_back(laserCloud->points[ind]);
+                        cornerPointsLessSharp.push_back(laserCloud->points[ind]); /* 曲率最大的20个点 */
                     }
                     else
                     {
-                        break;
+                        break; /* 其它点 */
                     }
 
                     cloudNeighborPicked[ind] = 1; 
 
+                    /* 向前抑制5个点 */
                     for (int l = 1; l <= 5; l++)
                     {
                         float diffX = laserCloud->points[ind + l].x - laserCloud->points[ind + l - 1].x;
                         float diffY = laserCloud->points[ind + l].y - laserCloud->points[ind + l - 1].y;
                         float diffZ = laserCloud->points[ind + l].z - laserCloud->points[ind + l - 1].z;
-                        if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.05)
+                        if (diffX * diffX + diffY * diffY + diffZ * diffZ > 0.05) /* 曲率过大可能是断点，停止抑制？ */
                         {
                             break;
                         }
 
                         cloudNeighborPicked[ind + l] = 1;
                     }
+                    /* 向后抑制5个点 */
                     for (int l = -1; l >= -5; l--)
                     {
                         float diffX = laserCloud->points[ind + l].x - laserCloud->points[ind + l + 1].x;
@@ -356,7 +365,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
                     surfPointsFlat.push_back(laserCloud->points[ind]);
 
                     smallestPickedNum++;
-                    if (smallestPickedNum >= 4)
+                    if (smallestPickedNum >= 4) /* 最多取4个 */
                     { 
                         break;
                     }
@@ -388,7 +397,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
                     }
                 }
             }
-
+            /* 未被选择且未被抑制的点 */
             for (int k = sp; k <= ep; k++)
             {
                 if (cloudLabel[k] <= 0)
@@ -402,7 +411,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
         pcl::VoxelGrid<PointType> downSizeFilter;
         downSizeFilter.setInputCloud(surfPointsLessFlatScan);
         downSizeFilter.setLeafSize(0.2, 0.2, 0.2);
-        downSizeFilter.filter(surfPointsLessFlatScanDS);
+        downSizeFilter.filter(surfPointsLessFlatScanDS); /* 下采样平面 */
 
         surfPointsLessFlat += surfPointsLessFlatScanDS;
     }
@@ -501,3 +510,5 @@ int main(int argc, char **argv)
 
     return 0;
 }
+
+/* lyl read end 20260226 */
